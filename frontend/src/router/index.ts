@@ -9,6 +9,7 @@ import ResetPasswordView from '../views/ResetPasswordView.vue'
 import VerificationRequiredView from '../views/VerificationRequiredView.vue'
 import OrganizationsView from '../views/OrganizationsView.vue'
 import OrganizationWorkspaceView from '../views/OrganizationWorkspaceView.vue'
+import OrganizationRolesView from '../views/OrganizationRolesView.vue'
 
 export const routes = [
   { path: '/', name: 'foundation', component: FoundationView },
@@ -58,6 +59,12 @@ export const routes = [
     path: '/app/organizations/:organizationId',
     name: 'organization',
     component: OrganizationWorkspaceView,
+    meta: { requiresAuth: true, requiresVerified: true },
+  },
+  {
+    path: '/app/organizations/:organizationId/roles',
+    name: 'organization-roles',
+    component: OrganizationRolesView,
     meta: { requiresAuth: true, requiresVerified: true },
   },
   { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView },

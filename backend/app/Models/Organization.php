@@ -19,6 +19,12 @@ class Organization extends Model
         return $this->belongsTo(User::class, 'owner_user_id');
     }
 
+    /** @return HasMany<Role, $this> */
+    public function roles(): HasMany
+    {
+        return $this->hasMany(Role::class);
+    }
+
     /** @return HasMany<OrganizationMembership, $this> */
     public function memberships(): HasMany
     {

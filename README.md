@@ -2,7 +2,7 @@
 
 CoreERP is a portfolio-grade ERP under active development, built to demonstrate disciplined software engineering: clear boundaries, automated verification, security, and maintainable architecture.
 
-**Current milestone: Phase 1.2 — Organizations and memberships.** The repository contains an operational application shell, first-party SPA authentication, an organization tenant boundary, and infrastructure probes. Roles, permissions, and ERP business modules are not implemented.
+**Current milestone: Phase 1.3 — Organization-scoped RBAC.** The repository contains an operational application shell, first-party SPA authentication, an organization tenant boundary, and infrastructure probes. Organization-scoped roles and application-defined permissions are implemented; member administration and ERP business modules are not.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ Vue SPA → Laravel REST API (/api/v1) → PostgreSQL
 
 The backend and frontend are separate applications in one repository, with independent dependency manifests, lockfiles, and quality tooling. The development Vite server proxies `/api`, `/sanctum`, and Fortify mutation routes to Laravel. Organizations use shared-database, shared-schema tenancy. Future ERP tables must add explicit organization keys and authorization.
 
-See the [system overview](docs/architecture/system-overview.md), [foundation decision](docs/decisions/0001-foundation.md), [authentication decision](docs/decisions/0002-spa-authentication.md), [tenancy decision](docs/decisions/0003-multi-tenancy-and-organizations.md), and [Phase 1 roadmap](docs/phases/phase-01-core-platform.md).
+See the [system overview](docs/architecture/system-overview.md), [foundation decision](docs/decisions/0001-foundation.md), [authentication decision](docs/decisions/0002-spa-authentication.md), [tenancy decision](docs/decisions/0003-multi-tenancy-and-organizations.md), [RBAC decision](docs/decisions/0004-organization-scoped-rbac.md), and [Phase 1 roadmap](docs/phases/phase-01-core-platform.md).
 
 ## Technology stack
 
@@ -70,14 +70,14 @@ docker compose run --rm backend php artisan migrate --no-interaction
 docker compose up -d --wait
 ```
 
-The schema includes users, password-reset/session scaffolding, organizations, and memberships. There are no seeded users. Redis stores sessions, so the standard `sessions` table is unused. No Sanctum personal-access-token migration or token issuance is added.
+The schema includes users, password-reset/session scaffolding, organizations, memberships, organization roles, and relational permission grants. There are no seeded users. Redis stores sessions, so the standard `sessions` table is unused. No Sanctum personal-access-token migration or token issuance is added.
 
 - Frontend: <http://localhost:5174>
 - API liveness: <http://localhost:8088/api/v1/health>
 - API readiness: <http://localhost:8088/api/v1/ready>
 - Mailpit inbox: <http://localhost:8026>
 
-To try the application, open the frontend, create an account, then open Mailpit to follow its signed verification link. The link briefly opens the Laravel origin at port 8088 and returns to the SPA's organization onboarding screen. Create an organization, then enter its workspace at `/app/organizations/{organizationId}`. Password-reset messages also appear in Mailpit. Mailpit SMTP stays inside Docker on port 1025; its web UI binds only to loopback. Its inbox is ephemeral local development data.
+To try the application, open the frontend, create an account, then open Mailpit to follow its signed verification link. The link briefly opens the Laravel origin at port 8088 and returns to the SPA's organization onboarding screen. Create an organization, then enter its workspace at `/app/organizations/{organizationId}`. Open **Roles & Permissions** in the workspace to create or edit roles and their permissions. The explicit owner manages roles without needing an Owner role; assigning roles to members through the UI is deferred to Phase 1.4. Password-reset messages also appear in Mailpit. Mailpit SMTP stays inside Docker on port 1025; its web UI binds only to loopback. Its inbox is ephemeral local development data.
 
 Subsequent starts use `docker compose up -d --wait` (add `--build` after Dockerfile changes). After lockfile changes, rerun the dependency installation commands. Bind mounts provide source hot reload; dependencies live in ignored `backend/vendor` and `frontend/node_modules` directories.
 
@@ -152,4 +152,4 @@ Development uses the same `localhost` host on both ports so cookies work through
 
 ## Current status and next milestone
 
-Phase 1.0 provides the platform foundation. Phase 1.1 adds first-party authentication. Phase 1.2 adds organization ownership, membership, isolation policies, and route-based onboarding. No ERP business functionality exists. The next planned milestone is **1.3 RBAC**. See the [roadmap](docs/phases/phase-01-core-platform.md) and [Phase 1.2 validation](docs/phases/phase-01-organizations-validation.md).
+Phase 1.0 provides the platform foundation. Phase 1.1 adds first-party authentication. Phase 1.2 adds organization ownership, membership, isolation policies, and route-based onboarding. Phase 1.3 adds membership-scoped RBAC, permission-based organization updates, and owner-managed roles. No ERP business functionality exists. The next planned milestone is **1.4 User invitations / organization users**. See the [roadmap](docs/phases/phase-01-core-platform.md) and [Phase 1.3 validation](docs/phases/phase-01-rbac-validation.md).

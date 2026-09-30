@@ -109,3 +109,43 @@ test('organization onboarding survives refresh and denies another user', async (
     await secondContext.close()
   }
 })
+
+test('owner creates and edits organization roles that persist after refresh', async ({
+  page,
+}) => {
+  await registerAndVerify(page, 'RolesOwner')
+  await page.getByLabel('Organization name').fill('Roles Workspace')
+  await page.getByRole('button', { name: 'Create organization' }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Roles Workspace' }),
+  ).toBeVisible()
+  const workspaceUrl = page.url()
+  await page.getByRole('link', { name: 'Roles & Permissions' }).click()
+  await expect(page).toHaveURL(`${workspaceUrl}/roles`)
+  await page.getByLabel('Role name').fill('Organization Editor')
+  await page.getByLabel('Update organization details').check()
+  await page.getByRole('button', { name: 'Save role' }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Organization Editor' }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Edit Organization Editor', exact: true })
+    .click()
+  await page.getByLabel('Role name').fill('Workspace Administrator')
+  await page.getByLabel('View roles and permissions').check()
+  await page.getByRole('button', { name: 'Save role' }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Workspace Administrator' }),
+  ).toBeVisible()
+  await page.reload()
+  await expect(
+    page.getByRole('heading', { name: 'Workspace Administrator' }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Edit Workspace Administrator', exact: true })
+    .click()
+  await expect(page.getByLabel('Update organization details')).toBeChecked()
+  await expect(page.getByLabel('View roles and permissions')).toBeChecked()
+  await page.getByRole('link', { name: 'Organization workspace' }).click()
+  await expect(page).toHaveURL(workspaceUrl)
+})
