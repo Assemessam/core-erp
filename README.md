@@ -2,7 +2,7 @@
 
 CoreERP is a portfolio-grade ERP under active development, built to demonstrate disciplined software engineering: clear boundaries, automated verification, security, and maintainable architecture.
 
-**Current milestone: Phase 1.1 — Authentication.** The repository contains an operational application shell, first-party SPA authentication, and infrastructure probes. Tenancy, organizations, authorization rules, and ERP business modules are not implemented.
+**Current milestone: Phase 1.2 — Organizations and memberships.** The repository contains an operational application shell, first-party SPA authentication, an organization tenant boundary, and infrastructure probes. Roles, permissions, and ERP business modules are not implemented.
 
 ## Architecture
 
@@ -12,9 +12,9 @@ Vue SPA → Laravel REST API (/api/v1) → PostgreSQL
                                      → Mailpit (local email)
 ```
 
-The backend and frontend are separate applications in one repository, with independent dependency manifests, lockfiles, and quality tooling. The development Vite server proxies `/api`, `/sanctum`, and Fortify mutation routes to Laravel. The long-term system will be multi-tenant; no tenancy mechanism or isolation guarantee exists yet.
+The backend and frontend are separate applications in one repository, with independent dependency manifests, lockfiles, and quality tooling. The development Vite server proxies `/api`, `/sanctum`, and Fortify mutation routes to Laravel. Organizations use shared-database, shared-schema tenancy. Future ERP tables must add explicit organization keys and authorization.
 
-See the [system overview](docs/architecture/system-overview.md), [foundation decision](docs/decisions/0001-foundation.md), [authentication decision](docs/decisions/0002-spa-authentication.md), and [Phase 1 roadmap](docs/phases/phase-01-core-platform.md).
+See the [system overview](docs/architecture/system-overview.md), [foundation decision](docs/decisions/0001-foundation.md), [authentication decision](docs/decisions/0002-spa-authentication.md), [tenancy decision](docs/decisions/0003-multi-tenancy-and-organizations.md), and [Phase 1 roadmap](docs/phases/phase-01-core-platform.md).
 
 ## Technology stack
 
@@ -28,7 +28,7 @@ See the [system overview](docs/architecture/system-overview.md), [foundation dec
 | Frontend quality | Vitest, Vue Test Utils, Playwright, ESLint, Prettier, vue-tsc |
 | Runtime | Node 24 LTS, Docker Compose |
 
-Pinia stores the public current-user representation and authentication initialization state. It never stores tokens or session IDs; readiness stays local to its view.
+Pinia stores public current-user and organization representations. It never stores tokens or session IDs; the selected organization comes from the route, and readiness stays local to its view.
 
 ## Repository structure
 
@@ -70,14 +70,14 @@ docker compose run --rm backend php artisan migrate --no-interaction
 docker compose up -d --wait
 ```
 
-The existing Laravel users/password-reset/session migration is the only schema. There are no seeded users. Redis stores sessions, so the standard `sessions` table is unused. No Sanctum personal-access-token migration or token issuance is added.
+The schema includes users, password-reset/session scaffolding, organizations, and memberships. There are no seeded users. Redis stores sessions, so the standard `sessions` table is unused. No Sanctum personal-access-token migration or token issuance is added.
 
 - Frontend: <http://localhost:5174>
 - API liveness: <http://localhost:8088/api/v1/health>
 - API readiness: <http://localhost:8088/api/v1/ready>
 - Mailpit inbox: <http://localhost:8026>
 
-To try authentication, open the frontend, create an account, then open Mailpit to follow its signed verification link. The link briefly opens the Laravel origin at port 8088 and returns to the SPA. Password-reset messages also appear in Mailpit. Mailpit SMTP stays inside Docker on port 1025; its web UI binds only to loopback. Its inbox is ephemeral local development data.
+To try the application, open the frontend, create an account, then open Mailpit to follow its signed verification link. The link briefly opens the Laravel origin at port 8088 and returns to the SPA's organization onboarding screen. Create an organization, then enter its workspace at `/app/organizations/{organizationId}`. Password-reset messages also appear in Mailpit. Mailpit SMTP stays inside Docker on port 1025; its web UI binds only to loopback. Its inbox is ephemeral local development data.
 
 Subsequent starts use `docker compose up -d --wait` (add `--build` after Dockerfile changes). After lockfile changes, rerun the dependency installation commands. Bind mounts provide source hot reload; dependencies live in ignored `backend/vendor` and `frontend/node_modules` directories.
 
@@ -144,7 +144,7 @@ The [CI workflow](.github/workflows/quality.yml) builds the same containers, ins
 
 ## Authentication request flow
 
-The SPA calls `/sanctum/csrf-cookie`, then Fortify's `/register`, `/login`, `/logout`, `/forgot-password`, `/reset-password`, or `/email/verification-notification` routes through Vite's same-origin proxy. Axios sends credentials and the XSRF header. Laravel authenticates with a server-side Redis session; the browser's session cookie is HttpOnly. On refresh, the SPA requests `GET /api/v1/me` before entering a guarded route. Guests get 401. Authenticated users receive only ID, name, email, and verification status. Unverified users can reach `/api/v1/me` and the verification page but cannot enter the protected `/app` placeholder through the SPA guard. Future protected backend resources must enforce verification server-side.
+The SPA calls `/sanctum/csrf-cookie`, then Fortify's `/register`, `/login`, `/logout`, `/forgot-password`, `/reset-password`, or `/email/verification-notification` routes through Vite's same-origin proxy. Axios sends credentials and the XSRF header. Laravel authenticates with a server-side Redis session; the browser's session cookie is HttpOnly. On refresh, the SPA requests `GET /api/v1/me` before entering a guarded route. Guests get 401. Authenticated users receive only ID, name, email, and verification status. Unverified users can reach `/api/v1/me` and the verification page but cannot enter organization SPA routes. Organization APIs also enforce verification server-side.
 
 The password-reset request responds the same way for registered and unregistered addresses. The reset link opens the SPA and a successful reset leaves the user signed out. Login is rate limited; verification resends are throttled. Validation errors use HTTP 422, expired or invalid CSRF produces 419, and rate limits produce 429. The SPA displays these states without automatic retry loops.
 
@@ -152,4 +152,4 @@ Development uses the same `localhost` host on both ports so cookies work through
 
 ## Current status and next milestone
 
-Phase 1.0 provides the platform foundation. Phase 1.1 adds first-party user authentication, recovery, email verification, browser tests, and Mailpit. No ERP business functionality exists. The next planned milestone is **1.2 Organizations and memberships**; it has not started. See the [roadmap](docs/phases/phase-01-core-platform.md).
+Phase 1.0 provides the platform foundation. Phase 1.1 adds first-party authentication. Phase 1.2 adds organization ownership, membership, isolation policies, and route-based onboarding. No ERP business functionality exists. The next planned milestone is **1.3 RBAC**. See the [roadmap](docs/phases/phase-01-core-platform.md) and [Phase 1.2 validation](docs/phases/phase-01-organizations-validation.md).

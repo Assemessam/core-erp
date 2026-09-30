@@ -7,7 +7,8 @@ import RegisterView from '../views/RegisterView.vue'
 import ForgotPasswordView from '../views/ForgotPasswordView.vue'
 import ResetPasswordView from '../views/ResetPasswordView.vue'
 import VerificationRequiredView from '../views/VerificationRequiredView.vue'
-import ProtectedView from '../views/ProtectedView.vue'
+import OrganizationsView from '../views/OrganizationsView.vue'
+import OrganizationWorkspaceView from '../views/OrganizationWorkspaceView.vue'
 
 export const routes = [
   { path: '/', name: 'foundation', component: FoundationView },
@@ -44,7 +45,19 @@ export const routes = [
   {
     path: '/app',
     name: 'app',
-    component: ProtectedView,
+    redirect: { name: 'organizations' },
+    meta: { requiresAuth: true, requiresVerified: true },
+  },
+  {
+    path: '/app/organizations',
+    name: 'organizations',
+    component: OrganizationsView,
+    meta: { requiresAuth: true, requiresVerified: true },
+  },
+  {
+    path: '/app/organizations/:organizationId',
+    name: 'organization',
+    component: OrganizationWorkspaceView,
     meta: { requiresAuth: true, requiresVerified: true },
   },
   { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView },

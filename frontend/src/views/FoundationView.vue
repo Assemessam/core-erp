@@ -28,7 +28,7 @@ onMounted(checkReadiness)
 <template>
   <section aria-labelledby="foundation-title">
     <p class="mb-4 text-sm font-medium tracking-widest text-teal-300 uppercase">
-      Phase 1.1
+      Phase 1.2
     </p>
     <h1
       id="foundation-title"
@@ -37,8 +37,8 @@ onMounted(checkReadiness)
       A secure start for CoreERP.
     </h1>
     <p class="mt-6 max-w-xl text-lg leading-relaxed text-slate-400">
-      Create an account and verify your email to enter the protected application
-      shell. ERP workflows will arrive in later milestones.
+      Create an account, verify your email, and create an organization. ERP
+      workflows will arrive in later milestones.
     </p>
     <div class="mt-8 flex gap-4 text-sm font-medium">
       <RouterLink

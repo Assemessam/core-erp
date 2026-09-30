@@ -77,13 +77,13 @@ test('first-party session survives refresh and ends on logout', async ({
     .trim()
   expect(verificationUrl).toMatch(/^http:\/\/localhost:8088\/email\/verify\//)
   await page.goto(verificationUrl!)
-  await expect(page).toHaveURL(/\/app\?verified=1$/)
+  await expect(page).toHaveURL(/\/app\/organizations\?verified=1$/)
   await expect(
-    page.getByRole('heading', { name: 'Application shell' }),
+    page.getByRole('heading', { name: 'Organizations' }),
   ).toBeVisible()
   await page.reload()
   await expect(
-    page.getByRole('heading', { name: 'Application shell' }),
+    page.getByRole('heading', { name: 'Organizations' }),
   ).toBeVisible()
 
   await page.getByRole('button', { name: 'Sign out' }).click()

@@ -10,7 +10,7 @@ import { RouterLink, RouterView } from 'vue-router'
       <RouterLink to="/" class="text-xl font-semibold tracking-tight"
         >CoreERP</RouterLink
       >
-      <span class="text-sm text-slate-400">Phase 1.1 · Authentication</span>
+      <span class="text-sm text-slate-400">Phase 1.2 · Organizations</span>
     </header>
     <main id="main-content" class="py-16 sm:py-24">
       <RouterView />

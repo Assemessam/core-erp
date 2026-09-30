@@ -29,7 +29,7 @@ describe('authentication route guards', () => {
     await router.push('/app')
     await router.isReady()
     expect(router.currentRoute.value.name).toBe('login')
-    expect(router.currentRoute.value.query.redirect).toBe('/app')
+    expect(router.currentRoute.value.query.redirect).toBe('/app/organizations')
     expect(authApi.me).toHaveBeenCalledTimes(2)
   })
 
@@ -43,14 +43,14 @@ describe('authentication route guards', () => {
     vi.mocked(authApi.me).mockResolvedValue(verified)
     const verifiedRouter = createAppRouter(createMemoryHistory())
     await verifiedRouter.push('/verify-email')
-    expect(verifiedRouter.currentRoute.value.name).toBe('app')
+    expect(verifiedRouter.currentRoute.value.name).toBe('organizations')
   })
 
   it('keeps authenticated users out of guest-only pages', async () => {
     vi.mocked(authApi.me).mockResolvedValue(verified)
     const router = createAppRouter(createMemoryHistory())
     await router.push('/login')
-    expect(router.currentRoute.value.name).toBe('app')
+    expect(router.currentRoute.value.name).toBe('organizations')
   })
 
   it('rechecks a cached user before entering a protected route after session expiry', async () => {
@@ -62,7 +62,7 @@ describe('authentication route guards', () => {
       })
     const router = createAppRouter(createMemoryHistory())
     await router.push('/app')
-    expect(router.currentRoute.value.name).toBe('app')
+    expect(router.currentRoute.value.name).toBe('organizations')
 
     await router.push('/verify-email')
     expect(router.currentRoute.value.name).toBe('login')
