@@ -1,0 +1,65 @@
+name: Quality
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Configure local environment
+        run: |
+          cp .env.example .env
+          cp backend/.env.example backend/.env
+          printf '\nLOCAL_UID=%s\nLOCAL_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
+          docker compose config --quiet
+      - name: Build development runtimes
+        run: docker compose build
+      - name: Install locked dependencies
+        run: |
+          docker compose run --rm --no-deps backend composer install --no-interaction --prefer-dist
+          docker compose run --rm --no-deps backend composer validate --strict
+          docker compose run --rm --no-deps backend composer check-platform-reqs
+          docker compose run --rm --no-deps frontend npm ci
+          docker compose run --rm --no-deps backend php artisan key:generate --no-interaction
+      - name: Start and verify the stack
+        run: |
+          docker compose up -d --wait postgres redis
+          docker compose run --rm backend php artisan migrate --no-interaction
+          docker compose up -d --wait
+          curl --fail http://localhost:8088/api/v1/health
+          curl --fail http://localhost:8088/api/v1/ready
+          curl --fail http://localhost:5174/api/v1/ready
+          curl --fail http://localhost:8026/api/v1/info
+      - name: Backend quality
+        run: docker compose exec -T backend composer quality
+      - name: Frontend quality
+        run: docker compose exec -T frontend npm run quality
+      - name: Dependency audits
+        run: |
+          docker compose exec -T backend composer audit
+          docker compose exec -T frontend npm audit --audit-level=low
+      - name: Browser authentication
+        run: |
+          docker run --rm --network host --ipc=host \
+            -v "$PWD/frontend:/app" -w /app -e CI=1 \
+            mcr.microsoft.com/playwright:v1.63.0-noble \
+            npx playwright test
+      - name: Service logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+      - name: Stop CI services
+        if: always()
+        run: docker compose down -v

@@ -1,0 +1,6 @@
+.git
+**/vendor
+**/node_modules
+**/.env
+**/dist
+**/storage/logs/*
