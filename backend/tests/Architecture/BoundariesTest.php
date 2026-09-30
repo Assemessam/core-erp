@@ -1,8 +1,12 @@
 <?php
 
+use App\Actions\RenameOrganization;
+use App\Queries\ListOrganizations;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Session;
 use PhpParser\Node;
 use PhpParser\NodeFinder;
@@ -48,6 +52,16 @@ arch('business actions models policies and enums do not read ambient session or 
     ->expect(['App\\Actions', 'App\\Models', 'App\\Policies', 'App\\Enums'])
     ->not->toUse([Session::class, 'Illuminate\\Contracts\\Session', 'Illuminate\\Session', 'session', 'request']);
 
+arch('extracted organization operations are independent of HTTP and ambient actor context')
+    ->expect([ListOrganizations::class, RenameOrganization::class])
+    ->not->toUse([
+        'App\\Http', 'Illuminate\\Http', 'Illuminate\\Foundation\\Http', 'Illuminate\\Routing',
+        'Symfony\\Component\\HttpFoundation', 'Symfony\\Component\\HttpKernel\\Exception',
+        'Illuminate\\Validation\\ValidationException', 'Illuminate\\Contracts\\Auth',
+        Auth::class, Gate::class, Session::class,
+        'auth', 'request', 'response', 'session', 'abort', 'abort_if', 'abort_unless',
+    ]);
+
 it('keeps Domain independent of framework and outer layers when introduced', function () use ($domainNamespaces, $outerNamespaces) {
     expect($domainNamespaces)->not->toUse([
         'Illuminate', 'Laravel', 'Symfony', ...$outerNamespaces,
@@ -77,6 +91,27 @@ it('keeps explicit transaction control out of controllers', function () use ($co
         });
 
         expect($violations)->toBeEmpty($file->getRelativePathname().' must delegate transaction control to an application use case.');
+    }
+});
+
+it('keeps explicit persistence mutation calls out of controllers', function () use ($controllerDirectories) {
+    // A syntax guard for common Eloquent/query-builder writes, not data-flow analysis.
+    // Indirect/dynamic calls still require review and behavior tests.
+    $parser = (new ParserFactory)->createForHostVersion();
+    $finder = new NodeFinder;
+
+    foreach (Finder::create()->files()->in($controllerDirectories)->name('*.php') as $file) {
+        $violations = $finder->find($parser->parse($file->getContents()) ?? [], function (Node $node): bool {
+            return ($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall || $node instanceof Node\Expr\NullsafeMethodCall)
+                && $node->name instanceof Node\Identifier
+                && in_array(strtolower($node->name->toString()), [
+                    'save', 'savequietly', 'update', 'updatequietly', 'create', 'delete', 'forcedelete', 'destroy',
+                    'insert', 'upsert', 'updateorcreate', 'firstorcreate', 'increment', 'decrement',
+                    'sync', 'syncwithoutdetaching', 'attach', 'detach', 'truncate',
+                ], true);
+        });
+
+        expect($violations)->toBeEmpty($file->getRelativePathname().' must delegate persistence mutations to an application operation.');
     }
 });
 

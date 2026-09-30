@@ -2,7 +2,7 @@
 
 CoreERP is a portfolio-grade ERP under active development, built to demonstrate disciplined software engineering: clear boundaries, automated verification, security, and maintainable architecture.
 
-**Current checkpoint: Phase 1.3.5A — Architecture Guardrails and Characterization.** Phase 1.3 organization-scoped RBAC is complete. The repository contains an operational application shell, first-party SPA authentication, an organization tenant boundary, and infrastructure probes. [ADR 0005](docs/decisions/0005-ddd-modular-monolith-architecture.md) defines the approved modular-monolith direction; application namespaces have not migrated. Member administration and ERP business modules are not implemented.
+**Current checkpoint: Phase 1.3.5B — Organization Application Entry Points.** Organization listing and rename now use explicit query/action classes. Phase 1.3 organization-scoped RBAC is complete. The repository contains an operational application shell, first-party SPA authentication, an organization tenant boundary, and infrastructure probes. [ADR 0005](docs/decisions/0005-ddd-modular-monolith-architecture.md) defines the approved modular-monolith direction; application namespaces have not migrated. Member administration and ERP business modules are not implemented.
 
 ## Architecture
 

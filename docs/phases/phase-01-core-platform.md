@@ -20,7 +20,8 @@ Phase 1.0 established the operational Laravel/Vue shell and quality checks; see 
 ## Phase 1.3.5 checkpoints
 
 - **1.3.5A — Architecture Guardrails and Characterization: complete.** Documentation, agent rules, architecture suite, HTTP/security and Laravel-wiring characterization are locally validated; see [ADR 0005](../decisions/0005-ddd-modular-monolith-architecture.md) and the [checkpoint record](phase-01-ddd-architecture-validation.md). No namespace or business-logic migration.
-- **1.3.5B and later:** application extraction and module migration in separately reviewed checkpoints; not started and require explicit authorization.
+- **1.3.5B — Extract Existing Organization Application Entry Points: complete.** Membership-scoped listing and rename now use explicit query/action classes; existing Eloquent binding, Policy/Form Request authorization, API, and schema remain unchanged. See the checkpoint-B section of the [validation record](phase-01-ddd-architecture-validation.md#phase-135b--extract-existing-organization-application-entry-points).
+- **1.3.5C and later:** module namespace migration and remaining refactor work require separately authorized checkpoints; not started.
 
 The approved direction keeps Identity separate from Organization, with memberships and tenant RBAC together in Organization. Current lightweight paths retain Eloquent; richer domain aggregates and repositories require actual business invariants. Acceptance is the same business behavior, HTTP API, frontend, database, and tenant/security semantics with different backend architecture.
 

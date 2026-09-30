@@ -15,7 +15,9 @@ In local development Vite forwards API, Sanctum CSRF, and Fortify routes to Lara
 
 ## Current structure and architecture groundwork
 
-Phase 1.3 is implemented. **Phase 1.3.5A establishes architecture documentation, guardrails, and characterization tests only.** Classes still live in global Laravel namespaces (`App/Models`, `Actions`, `Http`, `Policies`, `Enums`, and `Providers`). Controllers still contain some queries/direct updates; OrganizationMembership still evaluates permissions. No module migration or authorization extraction has occurred.
+Phase 1.3 is implemented. **Phase 1.3.5A established guardrails; Phase 1.3.5B extracts Organization listing and rename operations.** Classes remain in global Laravel namespaces, including the temporary `App/Queries` read-side location. OrganizationController delegates the membership-scoped, name-ordered list to `ListOrganizations` using the session actor's integer ID, and delegates its validated name mutation to `RenameOrganization`. Store still uses CreateOrganization; show still authorizes and represents the route-bound model. RBAC controller queries and OrganizationMembership permission evaluation are unchanged.
+
+Rename intentionally receives the already-authorized route-bound Eloquent model, avoiding a duplicate lookup. Validation and authorization remain in the existing Form Request/Policy until a later centralization checkpoint; the operation is not a standalone authorization boundary. No extra transaction, repository, aggregate, event, namespace move, or module tree was introduced.
 
 ## Target architecture (approved, not yet migrated)
 
@@ -28,7 +30,7 @@ Phase 1.3 is implemented. **Phase 1.3.5A establishes architecture documentation,
 - Controllers invoke direct write use cases/queries. Reads may use efficient Eloquent/query-builder/SQL. No buses, event sourcing, separate read database, or new domain events.
 - Policies remain Laravel adapters; a later checkpoint will centralize access decisions for reuse. Explicit tenant scope, constraints, binding, authorization ordering, and transaction semantics remain authoritative.
 
-Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. Class moves, application extraction, and the evaluator are future checkpoints, each requiring authorization.
+Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. Class moves, remaining application extraction, and the evaluator are future checkpoints, each requiring authorization.
 
 ## HTTP contract
 

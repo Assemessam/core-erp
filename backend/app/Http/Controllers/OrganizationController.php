@@ -3,22 +3,25 @@
 namespace App\Http\Controllers;
 
 use App\Actions\CreateOrganization;
+use App\Actions\RenameOrganization;
 use App\Http\Requests\StoreOrganizationRequest;
 use App\Http\Requests\UpdateOrganizationRequest;
 use App\Http\Resources\OrganizationResource;
 use App\Models\Organization;
 use App\Models\User;
+use App\Queries\ListOrganizations;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Gate;
 
 class OrganizationController extends Controller
 {
-    public function index(): AnonymousResourceCollection
+    public function index(Request $request, ListOrganizations $list): AnonymousResourceCollection
     {
-        return OrganizationResource::collection(
-            Organization::query()->whereHas('memberships', fn ($query) => $query->where('user_id', auth()->id()))
-                ->orderBy('name')->get(),
-        );
+        $actor = $request->user();
+        assert($actor instanceof User);
+
+        return OrganizationResource::collection($list->handle($actor->id));
     }
 
     public function store(StoreOrganizationRequest $request, CreateOrganization $create): OrganizationResource
@@ -37,10 +40,8 @@ class OrganizationController extends Controller
         return new OrganizationResource($organization);
     }
 
-    public function update(UpdateOrganizationRequest $request, Organization $organization): OrganizationResource
+    public function update(UpdateOrganizationRequest $request, Organization $organization, RenameOrganization $rename): OrganizationResource
     {
-        $organization->update($request->validated());
-
-        return new OrganizationResource($organization);
+        return new OrganizationResource($rename->handle($organization, $request->validated('name')));
     }
 }

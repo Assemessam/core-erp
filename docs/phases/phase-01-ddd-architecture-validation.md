@@ -1,5 +1,7 @@
 # Phase 1.3.5A — Architecture Guardrails and Characterization
 
+This first section is the historical checkpoint-A record. The checkpoint-B record follows below.
+
 - Date: 2026-09-30
 - Status: Checkpoint A complete against local validation; the overall Phase 1.3.5 refactor is **not complete**.
 - Scope: Documentation, architecture guardrails, and characterization only. Phase 1.3.5B and Phase 1.4 have not started.
@@ -180,3 +182,106 @@ No namespace migration occurred. No business logic, authorization evaluator, rou
 Review ADR 0005's lightweight Application/Eloquent exception, context ownership, dependency rules, and static-analysis limitations; the characterization matrix and 404/CORS observations; and the architecture tests' activation conditions. Untracked new files are listed by Git status but do not appear in plain `git diff --stat` until staged; no staging was performed.
 
 Recommended Phase 1.3.5B scope, only after approval: extract current Organization controller reads/rename into small Application entry points with unchanged namespaces/binding and acceptance behavior where feasible, before a separately reviewed mechanical module move. Confirm that checkpoint's exact boundary first. Stop after A; do not start B or Phase 1.4.
+
+# Phase 1.3.5B — Extract Existing Organization Application Entry Points
+
+- Date: 2026-09-30
+- Status: Checkpoint B complete against local validation. Overall Phase 1.3.5 remains in progress; C has not started.
+- Starting state: clean working tree on `refactor/ddd-architecture`, at committed checkpoint A, `9591194` (`refactor: establish DDD architecture guardrails`). No branch switch or Git mutation was performed.
+
+## Scope and implementation
+
+Added `App\Queries\ListOrganizations::handle(int $userId)` and `App\Actions\RenameOrganization::handle(Organization $organization, string $name): Organization`. These are temporary conventional namespaces before module migration, not new bounded contexts. No existing class moved. ADR 0005 remains unchanged because this implements its already-approved pragmatic exception.
+
+ListOrganizations contains the exact previous database read: `whereHas('memberships', ... user_id ...)`, `orderBy('name')`, then `get()`. It still selects the current model data, is unpaginated, and adds no eager loading (the existing id/name Resource needs none). Filtering stays in PostgreSQL, not PHP. OrganizationController obtains the actor from the authenticated request and passes its integer ID; it never accepts an actor ID from client input. The query uses neither a User model nor ambient auth/request state.
+
+RenameOrganization performs the existing Eloquent update of the validated name and returns the same model. It intentionally accepts the already-authorized route-bound Organization: this preserves binding/authorization order and avoids another database lookup. It adds no validation, Gate/Policy call, HTTP error, transaction, event, ownership change, or nonstandard timestamp behavior. Validation and actor authorization **remain the caller's responsibility**, currently UpdateOrganizationRequest and OrganizationPolicy. This transitional operation must not be treated as an independently authorized public workflow before later authorization centralization.
+
+Controller index/update now adapt HTTP input, invoke the operations, and return the existing Resources. Store/CreateOrganization and show/Gate/route-bound representation are unchanged. RBAC controller/actions, membership permission evaluation, Policies, Form Requests, Resources, routes, and models are unchanged. No repository, mapper, DTO, value object, pure aggregate, or authorization evaluator was needed. No extra lookup or transaction was introduced for rename.
+
+## Files changed for B
+
+| File | Change |
+| --- | --- |
+| `backend/app/Queries/ListOrganizations.php` | New explicit read query |
+| `backend/app/Actions/RenameOrganization.php` | New lightweight write operation, documenting caller authorization/validation |
+| `backend/app/Http/Controllers/OrganizationController.php` | Delegate index query and update mutation |
+| `backend/tests/Feature/Application/OrganizationOperationsTest.php` | Six direct-operation/HTTP boundary cases, using the existing real PostgreSQL transaction setup |
+| `backend/tests/Architecture/BoundariesTest.php` | New operation dependency guard and controller mutation syntax guard |
+| `README.md` | Current checkpoint B status |
+| `docs/architecture/system-overview.md` | Actual current extraction and transitional boundaries |
+| `docs/phases/phase-01-core-platform.md` | B complete, C not started; overall refactor still incomplete |
+| This record | Separate B implementation/validation evidence; A preserved as history |
+
+## Tests and guardrails
+
+The pre-edit Organization/RBAC/characterization/Architecture baseline passed **35 tests / 412 assertions**, with the same two deferred module-layer skips.
+
+New tests prove:
+
+- Explicit actor membership scoping includes both owned and non-owned member organizations, excludes unrelated organizations, and preserves name ordering, including when the ambient authenticated user differs or no user is authenticated.
+- A user with zero memberships gets an empty collection even while an unrelated owner is authenticated.
+- Client-supplied `user_id` cannot override the session actor in the HTTP list endpoint.
+- Rename works directly without HTTP objects/authentication, returns the supplied model, persists its name, and preserves owner, memberships, roles, permissions, and membership-role links.
+- Empty/overlong rename input is still rejected by the HTTP validation boundary without mutation.
+
+No existing feature/characterization assertions were weakened or changed. Tests stay under Feature/Application to inherit the existing PostgreSQL DatabaseTransactions setup; no testing strategy or parallel backend execution was introduced.
+
+The new dependency rule actively checks the two operations now, without waiting for module namespaces. It rejects application HTTP classes, framework HTTP types/exceptions, ValidationException, auth contracts/facades, Gate/Session, and ambient HTTP/auth helpers. A PHP-parser syntax guard rejects common explicit Eloquent/query-builder mutation calls in controllers. It complements the earlier DB/transaction checks. This is not regex or complete data-flow analysis: dynamic/indirect calls and unlisted mutation methods still need review and behavior tests. Existing two future module-layer checks remain explicitly skipped; no modules/stubs were created.
+
+An initial Pint run identified import order in the architecture test; formatting that file resolved it. An initial architecture scan of the entire Symfony HttpKernel namespace loaded a deprecated vendor extension. The new rule was narrowed to the relevant HTTP exception namespace, avoiding unrelated vendor loading without suppressing warnings. Final validation has no such deprecation.
+
+## Results
+
+| Check | Result |
+| --- | --- |
+| Complete backend quality | **63 passed, 2 expected skips, 570 assertions** |
+| Architecture suite separately | **7 passed, 2 expected skips, 96 assertions** |
+| Pint | Passed, 67 files |
+| Larastan/PHPStan | Level 8, 40 analyzed application files, no errors |
+| Composer strict validation/platform requirements | Passed |
+| Composer audit | No vulnerability advisories |
+| Established frontend quality | ESLint, Prettier, type checking, 28 Vitest tests, production build passed |
+| Full pinned Playwright suite | **3 passed**, existing two-worker browser configuration |
+| Infrastructure | Compose config valid; all five existing services healthy; PostgreSQL ready, Redis PONG, direct health/readiness and Vite readiness return `status: ok` |
+| Git checks | Whitespace check passed; migration and frontend diffs empty |
+
+Backend database testing finished before browser writes. Local tests do not establish GitHub-hosted CI or production deployment results. Existing migration-compatibility tests temporarily manipulate schema inside rollback transactions; no deployment migration or schema change was introduced. Browser tests create the normal local test accounts, organizations, roles, and Mailpit messages; otherwise no data changes were performed. The established testing environment and the 404/CORS follow-ups recorded in A remain unchanged.
+
+## Commands executed for B
+
+Inspection used `cat`, `rg`/existing repository context, `git branch --show-current`, `git status --short`, `git log -1 --oneline`, and `git diff`. Substantive validation:
+
+```sh
+docker compose exec -T backend php vendor/bin/pest tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php tests/Feature/ArchitectureCharacterizationTest.php tests/Architecture
+docker compose exec -T backend php vendor/bin/pest tests/Feature/Application/OrganizationOperationsTest.php tests/Feature/OrganizationsTest.php tests/Feature/ArchitectureCharacterizationTest.php tests/Architecture
+docker compose exec -T backend php vendor/bin/pint --test
+docker compose exec -T backend php vendor/bin/pest --testsuite=Architecture --display-deprecations
+docker compose exec -T backend php vendor/bin/pint tests/Architecture/BoundariesTest.php
+docker compose exec -T backend composer quality
+docker compose exec -T backend php vendor/bin/pest --testsuite=Architecture
+docker compose exec -T backend composer validate --strict
+docker compose exec -T backend composer check-platform-reqs
+docker compose exec -T backend composer audit
+docker compose exec -T frontend npm run quality
+docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test
+docker compose config --quiet
+docker compose ps
+docker compose exec -T postgres pg_isready -U coreerp
+docker compose exec -T redis redis-cli ping
+curl --fail --silent --show-error http://localhost:8088/api/v1/health
+curl --fail --silent --show-error http://localhost:8088/api/v1/ready
+curl --fail --silent --show-error http://localhost:5174/api/v1/ready
+git diff --check
+git diff -- backend/database/migrations frontend
+git status --short
+git diff --stat
+```
+
+## Compatibility, review, and stop point
+
+Migrations, constraints, schema, frontend source, routes, resource shapes, authorization/verification behavior, 401/403/404 ordering, ownership/RBAC semantics, and CreateOrganization are unchanged. Existing feature and browser tests remain green. No dependency changes, namespace migration, Modules directories, or Phase 1.4 work. No commit, push, switch, reset, discard, or staging operation.
+
+Review the query's explicit actor ID and unchanged SQL membership predicate; the rename operation's already-authorized Eloquent input and caller-validation precondition; controller delegation; and the syntax guard's documented limits. New files are untracked and therefore excluded from plain `git diff --stat` until staged.
+
+Recommended C: a separately approved mechanical Organization namespace migration with provider/policy, relationship, import, and architecture-rule updates and the same acceptance tests. Keep authorization centralization and RBAC behavior extraction separately reviewable. **Stop after B; C has not begun.**
