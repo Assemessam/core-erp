@@ -2,7 +2,7 @@
 
 CoreERP is a portfolio-grade ERP under active development, built to demonstrate disciplined software engineering: clear boundaries, automated verification, security, and maintainable architecture.
 
-**Current milestone: Phase 1.3 — Organization-scoped RBAC.** The repository contains an operational application shell, first-party SPA authentication, an organization tenant boundary, and infrastructure probes. Organization-scoped roles and application-defined permissions are implemented; member administration and ERP business modules are not.
+**Current checkpoint: Phase 1.3.5A — Architecture Guardrails and Characterization.** Phase 1.3 organization-scoped RBAC is complete. The repository contains an operational application shell, first-party SPA authentication, an organization tenant boundary, and infrastructure probes. [ADR 0005](docs/decisions/0005-ddd-modular-monolith-architecture.md) defines the approved modular-monolith direction; application namespaces have not migrated. Member administration and ERP business modules are not implemented.
 
 ## Architecture
 
@@ -152,4 +152,4 @@ Development uses the same `localhost` host on both ports so cookies work through
 
 ## Current status and next milestone
 
-Phase 1.0 provides the platform foundation. Phase 1.1 adds first-party authentication. Phase 1.2 adds organization ownership, membership, isolation policies, and route-based onboarding. Phase 1.3 adds membership-scoped RBAC, permission-based organization updates, and owner-managed roles. No ERP business functionality exists. The next planned milestone is **1.4 User invitations / organization users**. See the [roadmap](docs/phases/phase-01-core-platform.md) and [Phase 1.3 validation](docs/phases/phase-01-rbac-validation.md).
+Phase 1.0 provides the platform foundation. Phase 1.1 adds first-party authentication. Phase 1.2 adds organization ownership, membership, isolation policies, and route-based onboarding. Phase 1.3 adds membership-scoped RBAC, permission-based organization updates, and owner-managed roles. Phase 1.3.5 introduces architecture guardrails before separately authorized application/module migration checkpoints. The overall refactor is not complete; **1.4 User invitations / organization users** remains planned and unimplemented. See the [roadmap](docs/phases/phase-01-core-platform.md), [Phase 1.3 validation](docs/phases/phase-01-rbac-validation.md), and [Phase 1.3.5A validation](docs/phases/phase-01-ddd-architecture-validation.md).

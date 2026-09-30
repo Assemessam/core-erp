@@ -50,6 +50,26 @@ it('lets the owner create and edit roles with stable minimal representations', f
     ]);
 });
 
+it('sorts permission keys on creation update and listing without changing the resource envelope', function () {
+    $organization = rbacOrganization();
+    $this->actingAs($organization->owner);
+    $base = '/api/v1/organizations/'.$organization->id.'/roles';
+    $permissions = ['roles.view', 'organizations.update'];
+    $created = $this->postJson($base, ['name' => 'Both', 'permissions' => $permissions])->assertCreated();
+    $id = $created->json('data.id');
+    $data = ['id' => $id, 'name' => 'Both', 'permissions' => ['organizations.update', 'roles.view']];
+    $created->assertExactJson(['data' => $data]);
+    $this->patchJson($base.'/'.$id, ['name' => 'Both', 'permissions' => $permissions])
+        ->assertOk()->assertExactJson(['data' => $data]);
+    $this->getJson($base)->assertOk()->assertExactJson(['data' => [$data], 'meta' => ['can_manage' => true]]);
+
+    $reader = User::factory()->create();
+    $membership = $organization->memberships()->create(['user_id' => $reader->id]);
+    app(AssignMembershipRole::class)->handle($membership, $organization->roles()->sole());
+    $this->actingAs($reader)->getJson($base)
+        ->assertOk()->assertExactJson(['data' => [$data], 'meta' => ['can_manage' => false]]);
+});
+
 it('validates names keys duplicates and spoofed fields without partial writes', function () {
     $organization = rbacOrganization();
     $this->actingAs($organization->owner);

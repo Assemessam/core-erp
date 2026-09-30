@@ -13,6 +13,23 @@ The SPA owns presentation and navigation. Vue Router carries organization contex
 
 In local development Vite forwards API, Sanctum CSRF, and Fortify routes to Laravel. Sanctum reads the Laravel session. A production reverse proxy, TLS, deployment process, and scaling configuration remain outside this milestone.
 
+## Current structure and architecture groundwork
+
+Phase 1.3 is implemented. **Phase 1.3.5A establishes architecture documentation, guardrails, and characterization tests only.** Classes still live in global Laravel namespaces (`App/Models`, `Actions`, `Http`, `Policies`, `Enums`, and `Providers`). Controllers still contain some queries/direct updates; OrganizationMembership still evaluates permissions. No module migration or authorization extraction has occurred.
+
+## Target architecture (approved, not yet migrated)
+
+[ADR 0005](../decisions/0005-ddd-modular-monolith-architecture.md) approves a DDD-oriented modular monolith with a pragmatic Application layer and CQRS-lite:
+
+- **Identity** owns user identity, credentials, authentication, recovery, verification, and current-user representation.
+- **Organization** owns tenant identity, ownership, memberships, roles, permission catalog/grants, and organization authorization. Membership and tenant RBAC stay together.
+- Modules have Domain, Application, Infrastructure, and Presentation layers only where actual code needs them. No empty future ERP modules or Shared Kernel are created.
+- Domain remains framework-independent. Lightweight Application paths may use same-module Eloquent and Laravel transactions; richer aggregates/repositories are introduced only when actual invariants justify them. This is not strict Clean Architecture everywhere.
+- Controllers invoke direct write use cases/queries. Reads may use efficient Eloquent/query-builder/SQL. No buses, event sourcing, separate read database, or new domain events.
+- Policies remain Laravel adapters; a later checkpoint will centralize access decisions for reuse. Explicit tenant scope, constraints, binding, authorization ordering, and transaction semantics remain authoritative.
+
+Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. Class moves, application extraction, and the evaluator are future checkpoints, each requiring authorization.
+
 ## HTTP contract
 
 | Route | Success | Failure | Purpose |
@@ -50,5 +67,15 @@ The Roles & Permissions SPA route is `/app/organizations/{organizationId}/roles`
 ## Verification boundaries
 
 Pest tests cover authentication, transaction rollback, PostgreSQL constraints, owner authorization, cross-tenant isolation, permission unions, revocation, RBAC constraints, and migration compatibility. Vitest covers client state and routing. Playwright exercises authentication, email verification, onboarding, refresh, a second user's access denial, and role creation/editing with persistence after refresh. Pint, Larastan, ESLint, Prettier, TypeScript checking, audits, and production build are local quality gates.
+
+The Architecture suite runs with backend quality without booting Laravel. Current controller/dependency/global-state checks are active; Domain/Application checks explicitly skip until their module layers exist. They complement, rather than prove, authorization and tenant isolation. Characterization covers application-owned errors, denial-before-validation ordering, resource status/shape, scoped binding, policy/factory/Fortify resolution, and unverified `/me`. See [Phase 1.3.5A validation](../phases/phase-01-ddd-architecture-validation.md) for observed results and limitations.
+
+## Deferred compatibility concerns
+
+Current 404 status hiding does not make error bodies indistinguishable. With debug disabled, a policy-hidden organization returns `{"message":"Not Found"}`; missing-model and foreign-role binding failures contain Laravel's model class/identifier message. Tests preserve status and the message-only envelope without making framework class names a public contract. No normalization is performed in 1.3.5A; any future normalization needs a separate security/API decision.
+
+`config/cors.php` currently allows GET, POST, and OPTIONS, but not PATCH. A true cross-origin PATCH preflight consequently lacks PATCH in `Access-Control-Allow-Methods`. The supported local SPA uses Vite's same-origin proxy; a cross-origin deployment needs separate CORS review. Configuration remains unchanged.
+
+Feature tests use the configured PostgreSQL database with outer transactions; there is no dedicated database name in phpunit.xml. One existing migration test drops/reapplies RBAC tables within that transaction, and deferred-constraint tests use explicit checks/savepoints. Keep tests sequential and separate backend tests from browser writes. This checkpoint does not alter the database-testing strategy.
 
 See [ADR 0001](../decisions/0001-foundation.md), [ADR 0002](../decisions/0002-spa-authentication.md), [ADR 0003](../decisions/0003-multi-tenancy-and-organizations.md), [ADR 0004](../decisions/0004-organization-scoped-rbac.md), and the [Phase 1 roadmap](../phases/phase-01-core-platform.md).
