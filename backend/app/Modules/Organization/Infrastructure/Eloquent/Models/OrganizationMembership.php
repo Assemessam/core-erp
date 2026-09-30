@@ -1,8 +1,9 @@
 <?php
 
-namespace App\Models;
+namespace App\Modules\Organization\Infrastructure\Eloquent\Models;
 
-use App\Enums\PermissionKey;
+use App\Models\User;
+use App\Modules\Organization\Domain\Authorization\PermissionKey;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;

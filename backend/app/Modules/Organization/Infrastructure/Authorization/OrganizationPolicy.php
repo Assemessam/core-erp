@@ -1,10 +1,10 @@
 <?php
 
-namespace App\Policies;
+namespace App\Modules\Organization\Infrastructure\Authorization;
 
-use App\Enums\PermissionKey;
-use App\Models\Organization;
 use App\Models\User;
+use App\Modules\Organization\Domain\Authorization\PermissionKey;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use Illuminate\Auth\Access\Response;
 
 class OrganizationPolicy

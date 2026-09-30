@@ -1,13 +1,13 @@
 <?php
 
-use App\Actions\CreateOrganization;
 use App\Actions\Fortify\CreateNewUser;
 use App\Actions\Fortify\ResetUserPassword;
 use App\Http\Responses\LoginResponse;
 use App\Http\Responses\PasswordResetLinkResponse;
-use App\Models\Organization;
 use App\Models\User;
-use App\Policies\OrganizationPolicy;
+use App\Modules\Organization\Application\Commands\CreateOrganization;
+use App\Modules\Organization\Infrastructure\Authorization\OrganizationPolicy;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use Database\Factories\UserFactory;
 use Illuminate\Support\Facades\Gate;
 use Laravel\Fortify\Contracts\CreatesNewUsers;

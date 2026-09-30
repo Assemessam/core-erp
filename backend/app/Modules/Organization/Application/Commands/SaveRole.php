@@ -1,9 +1,9 @@
 <?php
 
-namespace App\Actions;
+namespace App\Modules\Organization\Application\Commands;
 
-use App\Models\Organization;
-use App\Models\Role;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Role;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Enums;
+namespace App\Modules\Organization\Domain\Authorization;
 
 enum PermissionKey: string
 {

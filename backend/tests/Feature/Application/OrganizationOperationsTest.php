@@ -1,11 +1,11 @@
 <?php
 
-use App\Actions\AssignMembershipRole;
-use App\Actions\CreateOrganization;
-use App\Actions\RenameOrganization;
-use App\Actions\SaveRole;
 use App\Models\User;
-use App\Queries\ListOrganizations;
+use App\Modules\Organization\Application\Commands\CreateOrganization;
+use App\Modules\Organization\Application\Commands\RenameOrganization;
+use App\Modules\Organization\Application\Commands\SaveRole;
+use App\Modules\Organization\Application\Operations\AssignMembershipRole;
+use App\Modules\Organization\Application\Queries\ListOrganizations;
 use Illuminate\Support\Facades\DB;
 
 it('lists the explicit users owned and member organizations in name order without ambient authentication', function () {

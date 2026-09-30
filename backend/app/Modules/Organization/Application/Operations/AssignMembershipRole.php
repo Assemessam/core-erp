@@ -1,9 +1,9 @@
 <?php
 
-namespace App\Actions;
+namespace App\Modules\Organization\Application\Operations;
 
-use App\Models\OrganizationMembership;
-use App\Models\Role;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\OrganizationMembership;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Role;
 use Illuminate\Validation\ValidationException;
 
 /** Internal domain operation; callers must authorize membership administration. */

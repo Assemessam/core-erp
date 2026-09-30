@@ -1,9 +1,9 @@
 <?php
 
-use App\Actions\CreateOrganization;
-use App\Models\Organization;
-use App\Models\OrganizationMembership;
 use App\Models\User;
+use App\Modules\Organization\Application\Commands\CreateOrganization;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\OrganizationMembership;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;

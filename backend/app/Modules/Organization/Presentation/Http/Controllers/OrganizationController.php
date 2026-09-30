@@ -1,15 +1,16 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Modules\Organization\Presentation\Http\Controllers;
 
-use App\Actions\CreateOrganization;
-use App\Actions\RenameOrganization;
-use App\Http\Requests\StoreOrganizationRequest;
-use App\Http\Requests\UpdateOrganizationRequest;
-use App\Http\Resources\OrganizationResource;
-use App\Models\Organization;
+use App\Http\Controllers\Controller;
 use App\Models\User;
-use App\Queries\ListOrganizations;
+use App\Modules\Organization\Application\Commands\CreateOrganization;
+use App\Modules\Organization\Application\Commands\RenameOrganization;
+use App\Modules\Organization\Application\Queries\ListOrganizations;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
+use App\Modules\Organization\Presentation\Http\Requests\StoreOrganizationRequest;
+use App\Modules\Organization\Presentation\Http\Requests\UpdateOrganizationRequest;
+use App\Modules\Organization\Presentation\Http\Resources\OrganizationResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Gate;

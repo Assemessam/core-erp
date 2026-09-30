@@ -6,6 +6,7 @@ parameters:
     paths:
         - app
         - bootstrap/app.php
+        - bootstrap/providers.php
         - routes
         - database
     tmpDir: .phpstan.cache

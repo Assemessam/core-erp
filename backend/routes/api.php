@@ -1,9 +1,9 @@
 <?php
 
 use App\Http\Controllers\HealthController;
-use App\Http\Controllers\OrganizationController;
-use App\Http\Controllers\OrganizationRoleController;
 use App\Http\Resources\UserResource;
+use App\Modules\Organization\Presentation\Http\Controllers\OrganizationController;
+use App\Modules\Organization\Presentation\Http\Controllers\OrganizationRoleController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 

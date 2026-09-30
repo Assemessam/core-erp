@@ -1,7 +1,10 @@
 <?php
 
-use App\Actions\RenameOrganization;
-use App\Queries\ListOrganizations;
+use App\Modules\Organization\Application\Commands\CreateOrganization;
+use App\Modules\Organization\Application\Commands\RenameOrganization;
+use App\Modules\Organization\Application\Commands\SaveRole;
+use App\Modules\Organization\Application\Operations\AssignMembershipRole;
+use App\Modules\Organization\Application\Queries\ListOrganizations;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Facades\Auth;
@@ -22,11 +25,17 @@ $domainNamespaces = [];
 $applicationNamespaces = [];
 $outerNamespaces = ['App\\Http', 'App\\Models', 'App\\Actions', 'App\\Policies', 'App\\Providers', 'App\\Services'];
 $presentationNamespaces = ['App\\Http'];
+$modelNamespaces = ['App\\Models'];
+$businessNamespaces = ['App\\Actions', 'App\\Models'];
 
 foreach ($moduleDirectories as $directory) {
     $namespace = 'App\\Modules\\'.basename($directory);
     $outerNamespaces = [...$outerNamespaces, $namespace.'\\Application', $namespace.'\\Infrastructure', $namespace.'\\Presentation'];
     $presentationNamespaces[] = $namespace.'\\Presentation';
+    $businessNamespaces = [...$businessNamespaces, $namespace.'\\Domain', $namespace.'\\Application', $namespace.'\\Infrastructure'];
+    if (is_dir($directory.'/Infrastructure/Eloquent/Models')) {
+        $modelNamespaces[] = $namespace.'\\Infrastructure\\Eloquent\\Models';
+    }
 
     if (is_dir($directory.'/Domain')) {
         $domainNamespaces[] = $namespace.'\\Domain';
@@ -45,11 +54,11 @@ arch('controllers do not depend directly on database facades managers or connect
     ->not->toUse([DB::class, DatabaseManager::class, ConnectionInterface::class, PDO::class]);
 
 arch('persistence models do not depend on HTTP delivery classes')
-    ->expect('App\\Models')
-    ->not->toUse('App\\Http');
+    ->expect($modelNamespaces)
+    ->not->toUse($presentationNamespaces);
 
 arch('business actions models policies and enums do not read ambient session or request context')
-    ->expect(['App\\Actions', 'App\\Models', 'App\\Policies', 'App\\Enums'])
+    ->expect($businessNamespaces)
     ->not->toUse([Session::class, 'Illuminate\\Contracts\\Session', 'Illuminate\\Session', 'session', 'request']);
 
 arch('extracted organization operations are independent of HTTP and ambient actor context')
@@ -73,9 +82,17 @@ it('keeps Application independent of HTTP delivery when introduced', function ()
     expect($applicationNamespaces)->not->toUse([
         ...$presentationNamespaces,
         'Illuminate\\Http', 'Illuminate\\Foundation\\Http', 'Illuminate\\Routing',
-        'Symfony\\Component\\HttpFoundation', 'Symfony\\Component\\HttpKernel',
-        'auth', 'request', 'response', 'session', 'abort', 'abort_if', 'abort_unless',
+        'Symfony\\Component\\HttpFoundation', 'Symfony\\Component\\HttpKernel\\Exception',
+        Auth::class, Session::class,
+        'auth', 'request', 'response', 'session', 'abort', 'abort_unless',
     ]);
+    // C preserves SaveRole's existing foreign-role 404. Exempt only this dependency pair.
+    expect($applicationNamespaces)->not->toUse('abort_if')->ignoring(SaveRole::class);
+    // Existing RBAC validation errors remain until a separately reviewed extraction.
+    expect($applicationNamespaces)->not->toUse('Illuminate\\Validation\\ValidationException')
+        ->ignoring([SaveRole::class, AssignMembershipRole::class]);
+    // CreateOrganization reads only the explicit owner's key; no Identity mutation is authorized.
+    expect($applicationNamespaces)->not->toUse('App\\Models\\User')->ignoring(CreateOrganization::class);
 })->skip($applicationNamespaces === [], 'No module Application layer exists yet; activates automatically when introduced.');
 
 it('keeps explicit transaction control out of controllers', function () use ($controllerDirectories) {

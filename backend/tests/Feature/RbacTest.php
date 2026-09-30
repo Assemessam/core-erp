@@ -1,12 +1,12 @@
 <?php
 
-use App\Actions\AssignMembershipRole;
-use App\Actions\CreateOrganization;
-use App\Actions\SaveRole;
-use App\Enums\PermissionKey;
-use App\Models\Organization;
-use App\Models\Permission;
 use App\Models\User;
+use App\Modules\Organization\Application\Commands\CreateOrganization;
+use App\Modules\Organization\Application\Commands\SaveRole;
+use App\Modules\Organization\Application\Operations\AssignMembershipRole;
+use App\Modules\Organization\Domain\Authorization\PermissionKey;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Permission;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;

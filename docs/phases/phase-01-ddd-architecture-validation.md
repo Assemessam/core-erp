@@ -285,3 +285,141 @@ Migrations, constraints, schema, frontend source, routes, resource shapes, autho
 Review the query's explicit actor ID and unchanged SQL membership predicate; the rename operation's already-authorized Eloquent input and caller-validation precondition; controller delegation; and the syntax guard's documented limits. New files are untracked and therefore excluded from plain `git diff --stat` until staged.
 
 Recommended C: a separately approved mechanical Organization namespace migration with provider/policy, relationship, import, and architecture-rule updates and the same acceptance tests. Keep authorization centralization and RBAC behavior extraction separately reviewable. **Stop after B; C has not begun.**
+
+# Phase 1.3.5C — Mechanical Organization Module Namespace Migration
+
+- Date: 2026-09-30–2026-10-01
+- Status: C complete against local validation. Overall 1.3.5 remains in progress; D and Phase 1.4 have not started.
+- Baseline: clean `refactor/ddd-architecture`, `5eba16b` (`refactor: extract organization application operations`). No Git staging, commit, push, branch switch, reset, or discard.
+
+## Scope and file ownership
+
+Moved 19 existing classes, preserving their bodies, into `backend/app/Modules/Organization/`:
+
+```text
+Domain/Authorization/PermissionKey.php
+Application/Commands/CreateOrganization.php
+Application/Commands/RenameOrganization.php
+Application/Commands/SaveRole.php
+Application/Operations/AssignMembershipRole.php
+Application/Queries/ListOrganizations.php
+Infrastructure/Eloquent/Models/Organization.php
+Infrastructure/Eloquent/Models/OrganizationMembership.php
+Infrastructure/Eloquent/Models/Role.php
+Infrastructure/Eloquent/Models/Permission.php
+Infrastructure/Authorization/OrganizationPolicy.php
+Infrastructure/Providers/OrganizationServiceProvider.php  (new)
+Presentation/Http/Controllers/OrganizationController.php
+Presentation/Http/Controllers/OrganizationRoleController.php
+Presentation/Http/Requests/StoreOrganizationRequest.php
+Presentation/Http/Requests/UpdateOrganizationRequest.php
+Presentation/Http/Requests/SaveRoleRequest.php
+Presentation/Http/Resources/OrganizationResource.php
+Presentation/Http/Resources/RoleResource.php
+Presentation/Http/Resources/PermissionResource.php
+```
+
+Original locations were respectively `app/Enums`, `app/Actions` (commands/operation), `app/Queries`, `app/Models`, `app/Policies`, and `app/Http/{Controllers,Requests,Resources}`. No aliases or compatibility classes remain. A comparison against Git HEAD confirmed identical moved class bodies after excluding namespaces, imports, and whitespace.
+
+The new OrganizationServiceProvider only registers `Gate::policy(Organization::class, OrganizationPolicy::class)`. `bootstrap/providers.php` registers it explicitly. `phpstan.neon` adds bootstrap/providers.php to analysis; level 8 stays unchanged. Existing App PSR-4 mapping suffices; Composer manifests/lockfiles are unchanged.
+
+Other modified files: `app/Models/User.php` (membership import only), `routes/api.php` (two controller imports only), `tests/Architecture/BoundariesTest.php`, four existing Feature test files (OrganizationsTest, RbacTest, ArchitectureCharacterizationTest, Application/OrganizationOperationsTest; imports/order only), README, system overview, roadmap, and this record. ADR 0005 and AGENTS.md remain unchanged.
+
+Eloquent tables, keys, ULIDs, fillable attributes, relationships, casts, binding and persistence logic are unchanged. Organization and OrganizationMembership now explicitly import the existing User model; User still exposes its inverse relationship. Controllers import the existing base Controller. Policy logic remains unchanged; no access evaluator was added. Domain contains only the pure PermissionKey vocabulary. Identity, Fortify, platform code, factories, frontend and migrations remain in place.
+
+## Architecture checks and temporary dependencies
+
+Both previously skipped Domain/Application rules now activate. Model HTTP-dependency and business ambient-context checks include real module namespaces. Controller transaction/mutation checks discover the new Presentation directory; B's extracted-operation checks still apply. Same-module Eloquent and DB transactions remain permitted.
+
+Narrow legacy exceptions preserve behavior instead of changing it during movement:
+
+- Only SaveRole may use `abort_if` in Application (its existing foreign-role 404).
+- Only SaveRole and AssignMembershipRole may use ValidationException in Application.
+- Only CreateOrganization may depend on `App\Models\User` in Application; it reads the supplied owner's key, with no Identity mutation.
+- Infrastructure owner/user relations and OrganizationPolicy retain the existing User dependency. Presentation uses User for authenticated input assertions; User's inverse relation points to the moved membership class.
+
+The Application HTTP scan targets Symfony HttpFoundation and HttpKernel exceptions rather than scanning unrelated HttpKernel extensions, matching B's avoidance of vendor deprecation loading. No broad class exclusion removes SaveRole from other HTTP rules. These are dependency/syntax guards, not data-flow proofs: indirect mutations, dynamic calls, and accessing Identity through relationships still need review and behavioral tests. No new package, generic abstraction, or domain invariant extraction.
+
+## Incremental checks and compatibility
+
+- Baseline targeted Organization/RBAC/characterization/Application/Architecture: **43 passed, 2 skipped, 475 assertions**.
+- After Domain movement: RBAC/Architecture **20 passed, 1 skipped, 252 assertions**; Larastan passed.
+- After Application movement: Organization/RBAC/Application/Architecture **35 passed, 366 assertions**; Larastan passed.
+- Models and Policy/provider moved as one coherent wiring step so policy discovery was not left broken: Organization/RBAC/characterization/Application **36 passed, 379 assertions**.
+- After Presentation movement: full backend suite and static analysis passed as below.
+
+Route inspection ran before and after migration. The temporary pre-move route JSON did not survive the interrupted session; comparison against the committed route source confirmed all definitions byte-identical after excluding imports. The post-move table has the same 11 API entries, methods, paths and middleware; only Organization controller action namespaces changed. Existing scoped-binding and security tests pass.
+
+The API retains organization/role creation 201, update 200, exact Resource envelopes/fields, permission ordering and `meta.can_manage`. Characterization retains guest 401, unverified 403, non-member 404, unauthorized member 403, foreign nested role 404, validation 422 and application-owned duplicate/authorization messages. Existing transaction, locking, rollback, permission revocation and composite/deferred constraint tests pass unchanged.
+
+With debug disabled, exception-renderer inspection confirms missing-model text now contains `App\Modules\Organization\Infrastructure\Eloquent\Models\Organization` or `Role`. Policy-hidden errors remain `{"message":"Not Found"}`. This incidental framework namespace change is intentionally not frozen by assertions or hidden behind compatibility aliases. Status/security/envelope semantics remain intact; 404 normalization remains separate work.
+
+## Final results
+
+| Check | Result |
+| --- | --- |
+| Complete Pest suite | **65 passed, 653 assertions**, no skips |
+| Architecture separately | **9 passed, 179 assertions**, no skips |
+| Pint | Passed, 68 files |
+| Larastan | Level 8, 42 files, no errors |
+| Composer optimized strict PSR autoload | Passed, package discovery successful |
+| Composer strict validate / platform requirements | Passed |
+| Composer audit | No security vulnerability advisories |
+| Frontend quality | ESLint, Prettier, vue-tsc, **28 Vitest tests / 7 files**, build passed |
+| npm audit | 0 vulnerabilities |
+| Established Playwright | **3 passed**, pinned image, existing 2 browser workers |
+| Compose/readiness | Config valid; all 5 services healthy; PostgreSQL accepting connections, Redis PONG, health/API/proxy status ok, Mailpit HTTP 200 |
+| Migration status | All three historical migrations Ran; no migration executed |
+| Git | Whitespace check clean; migration/frontend diffs empty |
+
+## Commands executed
+
+Inspection used `cat`, `rg`, `git branch --show-current`, `git status --short`, `git log -1 --oneline`, `git show HEAD:<path>`, and `git diff`. Temporary Python scripts mechanically moved files/replaced imports and compared moved class bodies and route definitions against the committed baseline. They are not repository tools or runtime dependencies.
+
+```sh
+docker compose exec -T backend php artisan route:list --path=api --json
+# Initial baseline:
+docker compose exec -T backend php vendor/bin/pest tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php tests/Feature/ArchitectureCharacterizationTest.php tests/Feature/Application tests/Architecture
+# Incremental Domain and Application checks:
+docker compose exec -T backend php vendor/bin/pest tests/Feature/RbacTest.php tests/Architecture --compact
+docker compose exec -T backend php vendor/bin/pest tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php tests/Feature/Application tests/Architecture --compact
+docker compose exec -T backend composer analyse
+# Model/Policy step:
+docker compose exec -T backend php vendor/bin/pest tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php tests/Feature/ArchitectureCharacterizationTest.php tests/Feature/Application --compact
+docker compose up -d --wait
+docker compose exec -T backend php vendor/bin/pint app/Modules app/Models/User.php bootstrap/providers.php routes/api.php tests/Architecture/BoundariesTest.php tests/Feature/Application/OrganizationOperationsTest.php tests/Feature/ArchitectureCharacterizationTest.php tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php
+docker compose exec -T backend composer dump-autoload --optimize --strict-psr
+docker compose exec -T backend composer quality
+docker compose exec -T backend php vendor/bin/pest --testsuite=Architecture --compact
+docker compose exec -T backend composer validate --strict
+docker compose exec -T backend composer check-platform-reqs
+docker compose exec -T backend composer audit
+docker compose exec -T backend php artisan migrate:status
+docker compose exec -T frontend npm run quality
+docker compose exec -T frontend npm audit
+docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test
+docker compose config --quiet
+docker compose ps
+docker compose exec -T postgres pg_isready -U coreerp
+docker compose exec -T redis redis-cli ping
+curl --fail --silent --show-error http://localhost:8088/api/v1/health
+curl --fail --silent --show-error http://localhost:8088/api/v1/ready
+curl --fail --silent --show-error http://localhost:5174/api/v1/ready
+curl --fail --silent --show-error -o /dev/null -w 'Mailpit HTTP %{http_code}\n' http://localhost:8026/
+git diff --check
+git diff -- backend/database/migrations
+git diff -- frontend
+git diff --find-renames
+git status --short
+git diff --stat
+```
+
+A read-only PHP stdin probe booted Laravel and rendered ModelNotFoundException/AuthorizationException with debug disabled to inspect incidental 404 text. Initial command corrections: host `python` was unavailable (used `python3`); after resumption temporary files/process handles were gone and services stopped (inspected retained workspace and started the existing stack); Pint `--dirty` could not see Git inside the backend mount (used explicit changed paths). None required business logic changes. Formatting only reordered imports. Final validations supersede these setup failures.
+
+## Limitations, review and stop point
+
+No intentional Organization/RBAC logic, authorization, route binding, transaction, database schema or frontend changes. `git diff -- backend/database/migrations` and `git diff -- frontend` are empty. Historical migrations reference schema definitions rather than moved PHP classes; no history rewrite or reseed. Browser tests create ordinary test accounts/organizations/roles/email; database contents are not claimed byte-identical. Backend database tests stayed sequential and finished before browser writes. Existing PostgreSQL transaction/schema-test cautions and cross-origin PATCH CORS follow-up remain unchanged; no deployment fix mixed in.
+
+Review explicit provider registration, User relationship imports, the three narrow Application exception pairs, and new module files. Plain unstaged Git diff shows deletions and excludes new module files; inspect untracked files alongside it (no staging solely for rename detection). Local checks do not establish production or hosted-CI results.
+
+Recommended D, subject to separate approval: a focused Organization authorization-boundary extraction with adversarial isolation/revocation tests; separately decide legacy HTTP error translation and the membership tenant invariant. Do not combine this with Identity migration or Phase 1.4. **C stops here; D has not begun.**

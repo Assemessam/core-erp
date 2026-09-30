@@ -1,14 +1,15 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Modules\Organization\Presentation\Http\Controllers;
 
-use App\Actions\SaveRole;
-use App\Enums\PermissionKey;
-use App\Http\Requests\SaveRoleRequest;
-use App\Http\Resources\PermissionResource;
-use App\Http\Resources\RoleResource;
-use App\Models\Organization;
-use App\Models\Role;
+use App\Http\Controllers\Controller;
+use App\Modules\Organization\Application\Commands\SaveRole;
+use App\Modules\Organization\Domain\Authorization\PermissionKey;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Role;
+use App\Modules\Organization\Presentation\Http\Requests\SaveRoleRequest;
+use App\Modules\Organization\Presentation\Http\Resources\PermissionResource;
+use App\Modules\Organization\Presentation\Http\Resources\RoleResource;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Gate;
 

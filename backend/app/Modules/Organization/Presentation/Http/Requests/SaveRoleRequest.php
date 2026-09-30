@@ -1,10 +1,10 @@
 <?php
 
-namespace App\Http\Requests;
+namespace App\Modules\Organization\Presentation\Http\Requests;
 
-use App\Enums\PermissionKey;
-use App\Models\Organization;
-use App\Models\Role;
+use App\Modules\Organization\Domain\Authorization\PermissionKey;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Role;
 use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;

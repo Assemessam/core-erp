@@ -1,9 +1,9 @@
 <?php
 
-namespace App\Actions;
+namespace App\Modules\Organization\Application\Commands;
 
-use App\Models\Organization;
 use App\Models\User;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use Illuminate\Support\Facades\DB;
 
 class CreateOrganization

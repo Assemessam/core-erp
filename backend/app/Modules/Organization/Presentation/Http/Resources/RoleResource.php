@@ -1,9 +1,9 @@
 <?php
 
-namespace App\Http\Resources;
+namespace App\Modules\Organization\Presentation\Http\Resources;
 
-use App\Models\Permission;
-use App\Models\Role;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Permission;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Role;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

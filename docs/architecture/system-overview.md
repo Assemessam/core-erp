@@ -15,11 +15,24 @@ In local development Vite forwards API, Sanctum CSRF, and Fortify routes to Lara
 
 ## Current structure and architecture groundwork
 
-Phase 1.3 is implemented. **Phase 1.3.5A established guardrails; Phase 1.3.5B extracts Organization listing and rename operations.** Classes remain in global Laravel namespaces, including the temporary `App/Queries` read-side location. OrganizationController delegates the membership-scoped, name-ordered list to `ListOrganizations` using the session actor's integer ID, and delegates its validated name mutation to `RenameOrganization`. Store still uses CreateOrganization; show still authorizes and represents the route-bound model. RBAC controller queries and OrganizationMembership permission evaluation are unchanged.
+Phase 1.3 is implemented. Phase 1.3.5A established guardrails, B extracted listing/rename operations, and **C mechanically moved Organization into `App\Modules\Organization`**. Identity (including User, Fortify, and `/me`) and platform health/readiness remain in conventional namespaces.
 
-Rename intentionally receives the already-authorized route-bound Eloquent model, avoiding a duplicate lookup. Validation and authorization remain in the existing Form Request/Policy until a later centralization checkpoint; the operation is not a standalone authorization boundary. No extra transaction, repository, aggregate, event, namespace move, or module tree was introduced.
+| Current module layer | Contents |
+| --- | --- |
+| Domain/Authorization | Pure `PermissionKey` enum only |
+| Application/Commands | CreateOrganization, RenameOrganization, SaveRole |
+| Application/Operations | AssignMembershipRole |
+| Application/Queries | ListOrganizations |
+| Infrastructure/Eloquent/Models | Organization, OrganizationMembership, Role, Permission |
+| Infrastructure/Authorization | OrganizationPolicy, unchanged authorization implementation |
+| Infrastructure/Providers | OrganizationServiceProvider, explicit model-to-policy registration |
+| Presentation/Http | Existing two controllers, three Form Requests, three Resources |
 
-## Target architecture (approved, not yet migrated)
+OrganizationController still delegates listing, creation, and rename; show authorizes the route-bound model. Rename takes an already-authorized model; caller validation/authorization remain required. Eloquent lives intentionally in Infrastructure and is used directly by lightweight Application paths. No repository, mapper, pure aggregate, transaction abstraction, or additional RBAC query extraction was introduced. Policy centralization and membership permission extraction have **not** occurred.
+
+Temporary dependencies retained by C are explicit: model owner/user relationships and the Policy reference `App\Models\User`; CreateOrganization accepts that explicit owner and reads its key without mutating Identity; Presentation uses User for authenticated input checks. User's inverse membership relationship imports the moved model. SaveRole retains `abort_if` for foreign-role rejection; SaveRole and AssignMembershipRole retain ValidationException. Architecture exceptions cover those exact dependency pairs, not whole namespace exclusions. Later authorized checkpoints must review these boundaries.
+
+## Target architecture (partially implemented)
 
 [ADR 0005](../decisions/0005-ddd-modular-monolith-architecture.md) approves a DDD-oriented modular monolith with a pragmatic Application layer and CQRS-lite:
 
@@ -30,7 +43,7 @@ Rename intentionally receives the already-authorized route-bound Eloquent model,
 - Controllers invoke direct write use cases/queries. Reads may use efficient Eloquent/query-builder/SQL. No buses, event sourcing, separate read database, or new domain events.
 - Policies remain Laravel adapters; a later checkpoint will centralize access decisions for reuse. Explicit tenant scope, constraints, binding, authorization ordering, and transaction semantics remain authoritative.
 
-Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. Class moves, remaining application extraction, and the evaluator are future checkpoints, each requiring authorization.
+Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. Identity migration, remaining application extraction, and the evaluator are future checkpoints, each requiring authorization.
 
 ## HTTP contract
 
@@ -70,11 +83,11 @@ The Roles & Permissions SPA route is `/app/organizations/{organizationId}/roles`
 
 Pest tests cover authentication, transaction rollback, PostgreSQL constraints, owner authorization, cross-tenant isolation, permission unions, revocation, RBAC constraints, and migration compatibility. Vitest covers client state and routing. Playwright exercises authentication, email verification, onboarding, refresh, a second user's access denial, and role creation/editing with persistence after refresh. Pint, Larastan, ESLint, Prettier, TypeScript checking, audits, and production build are local quality gates.
 
-The Architecture suite runs with backend quality without booting Laravel. Current controller/dependency/global-state checks are active; Domain/Application checks explicitly skip until their module layers exist. They complement, rather than prove, authorization and tenant isolation. Characterization covers application-owned errors, denial-before-validation ordering, resource status/shape, scoped binding, policy/factory/Fortify resolution, and unverified `/me`. See [Phase 1.3.5A validation](../phases/phase-01-ddd-architecture-validation.md) for observed results and limitations.
+The Architecture suite runs with backend quality without booting Laravel. Current controller/dependency/global-state checks are active; Organization Domain/Application checks now run with no skips; model/ambient-context guards include the module. They complement, rather than prove, authorization and tenant isolation. Characterization covers application-owned errors, denial-before-validation ordering, resource status/shape, scoped binding, policy/factory/Fortify resolution, and unverified `/me`. See [Phase 1.3.5 validation](../phases/phase-01-ddd-architecture-validation.md) for observed results and limitations.
 
 ## Deferred compatibility concerns
 
-Current 404 status hiding does not make error bodies indistinguishable. With debug disabled, a policy-hidden organization returns `{"message":"Not Found"}`; missing-model and foreign-role binding failures contain Laravel's model class/identifier message. Tests preserve status and the message-only envelope without making framework class names a public contract. No normalization is performed in 1.3.5A; any future normalization needs a separate security/API decision.
+Current 404 status hiding does not make error bodies indistinguishable. With debug disabled, a policy-hidden organization returns `{"message":"Not Found"}`; missing-model and foreign-role binding failures contain Laravel's model class/identifier message. Tests preserve status and the message-only envelope without making framework class names a public contract. C naturally changes the incidental model class text to `App\Modules\Organization\Infrastructure\Eloquent\Models\Organization` or `Role`; policy-hidden responses remain `Not Found`. No normalization is performed; any future normalization needs a separate security/API decision.
 
 `config/cors.php` currently allows GET, POST, and OPTIONS, but not PATCH. A true cross-origin PATCH preflight consequently lacks PATCH in `Access-Control-Allow-Methods`. The supported local SPA uses Vite's same-origin proxy; a cross-origin deployment needs separate CORS review. Configuration remains unchanged.
 

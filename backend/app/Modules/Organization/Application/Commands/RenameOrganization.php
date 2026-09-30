@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Actions;
+namespace App\Modules\Organization\Application\Commands;
 
-use App\Models\Organization;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 
 /** Transitional application operation: callers authorize and validate before invoking. */
 class RenameOrganization

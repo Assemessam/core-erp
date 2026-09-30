@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Queries;
+namespace App\Modules\Organization\Application\Queries;
 
-use App\Models\Organization;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use Illuminate\Database\Eloquent\Collection;
 
 class ListOrganizations
