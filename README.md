@@ -2,7 +2,7 @@
 
 CoreERP is a portfolio-grade ERP under active development, built to demonstrate disciplined software engineering: clear boundaries, automated verification, security, and maintainable architecture.
 
-**Current checkpoint: Phase 1.3.5C — Mechanical Organization Module Namespace Migration.** Organization now lives under `App\Modules\Organization`, with Domain, Application, Infrastructure, and Presentation layers. Phase 1.3 organization-scoped RBAC is complete. The repository contains an operational application shell, first-party SPA authentication, an organization tenant boundary, and infrastructure probes. [ADR 0005](docs/decisions/0005-ddd-modular-monolith-architecture.md) defines the approved modular-monolith direction; Identity remains in its existing namespaces; authorization centralization and further RBAC extraction are deferred. Member administration and ERP business modules are not implemented.
+**Current checkpoint: Phase 1.3.5D — Centralize Organization Authorization.** Organization now lives under `App\Modules\Organization`, with Domain, Application, Infrastructure, and Presentation layers. Phase 1.3 organization-scoped RBAC is complete. The repository contains an operational application shell, first-party SPA authentication, an organization tenant boundary, and infrastructure probes. [ADR 0005](docs/decisions/0005-ddd-modular-monolith-architecture.md) defines the approved modular-monolith direction; Policies and authorized Organization writes now share a persisted access evaluator. Identity remains in its existing namespaces; domain invariant and further RBAC extraction are deferred. Member administration and ERP business modules are not implemented.
 
 ## Architecture
 

@@ -43,6 +43,9 @@ class OrganizationController extends Controller
 
     public function update(UpdateOrganizationRequest $request, Organization $organization, RenameOrganization $rename): OrganizationResource
     {
-        return new OrganizationResource($rename->handle($organization, $request->validated('name')));
+        $actor = $request->user();
+        assert($actor instanceof User);
+
+        return new OrganizationResource($rename->handle($actor->id, $organization, $request->validated('name')));
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Modules\Organization\Presentation\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Modules\Organization\Application\Commands\SaveRole;
 use App\Modules\Organization\Domain\Authorization\PermissionKey;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
@@ -32,11 +33,17 @@ class OrganizationRoleController extends Controller
 
     public function store(SaveRoleRequest $request, Organization $organization, SaveRole $save): RoleResource
     {
-        return new RoleResource($save->handle($organization, null, $request->validated('name'), $request->validated('permissions')));
+        $actor = $request->user();
+        assert($actor instanceof User);
+
+        return new RoleResource($save->handle($actor->id, $organization, null, $request->validated('name'), $request->validated('permissions')));
     }
 
     public function update(SaveRoleRequest $request, Organization $organization, Role $role, SaveRole $save): RoleResource
     {
-        return new RoleResource($save->handle($organization, $role, $request->validated('name'), $request->validated('permissions')));
+        $actor = $request->user();
+        assert($actor instanceof User);
+
+        return new RoleResource($save->handle($actor->id, $organization, $role, $request->validated('name'), $request->validated('permissions')));
     }
 }

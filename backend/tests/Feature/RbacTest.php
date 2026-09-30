@@ -1,6 +1,8 @@
 <?php
 
 use App\Models\User;
+use App\Modules\Organization\Application\Authorization\AccessDecision;
+use App\Modules\Organization\Application\Authorization\OrganizationAccess;
 use App\Modules\Organization\Application\Commands\CreateOrganization;
 use App\Modules\Organization\Application\Commands\SaveRole;
 use App\Modules\Organization\Application\Operations\AssignMembershipRole;
@@ -119,19 +121,19 @@ it('unions multiple membership roles without granting authority in another organ
     $other = rbacOrganization();
     $user = User::factory()->create();
     $membership = $organization->memberships()->create(['user_id' => $user->id]);
-    $otherMembership = $other->memberships()->create(['user_id' => $user->id]);
-    $editor = app(SaveRole::class)->handle($organization, null, 'Editor', ['organizations.update']);
-    $reader = app(SaveRole::class)->handle($organization, null, 'Reader', ['roles.view']);
-    expect($membership->hasPermission($organization, PermissionKey::OrganizationsUpdate))->toBeFalse();
+    $other->memberships()->create(['user_id' => $user->id]);
+    $editor = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Editor', ['organizations.update']);
+    $reader = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Reader', ['roles.view']);
+    expect(app(OrganizationAccess::class)->update($user->id, $organization->id)->outcome)->toBe(AccessDecision::FORBIDDEN);
     app(AssignMembershipRole::class)->handle($membership, $editor);
-    expect($membership->hasPermission($organization, PermissionKey::OrganizationsUpdate))->toBeTrue();
-    expect($membership->hasPermission($organization, PermissionKey::RolesView))->toBeFalse();
+    expect(app(OrganizationAccess::class)->update($user->id, $organization->id)->outcome)->toBe(AccessDecision::ALLOWED);
+    expect(app(OrganizationAccess::class)->viewRoles($user->id, $organization->id)->outcome)->toBe(AccessDecision::FORBIDDEN);
     app(AssignMembershipRole::class)->handle($membership, $reader);
     app(AssignMembershipRole::class)->handle($membership, $reader);
     expect($membership->roles()->count())->toBe(2);
-    expect($membership->hasPermission($organization, PermissionKey::RolesView))->toBeTrue();
-    expect($membership->hasPermission($other, PermissionKey::OrganizationsUpdate))->toBeFalse();
-    expect($otherMembership->hasPermission($other, PermissionKey::OrganizationsUpdate))->toBeFalse();
+    expect(app(OrganizationAccess::class)->viewRoles($user->id, $organization->id)->outcome)->toBe(AccessDecision::ALLOWED);
+    expect(app(OrganizationAccess::class)->update($user->id, $other->id)->outcome)->toBe(AccessDecision::FORBIDDEN);
+    expect(app(OrganizationAccess::class)->view($user->id, $other->id)->outcome)->toBe(AccessDecision::ALLOWED);
     $this->actingAs($user);
     $this->patchJson('/api/v1/organizations/'.$organization->id, ['name' => 'Allowed'])->assertOk();
     $this->patchJson('/api/v1/organizations/'.$other->id, ['name' => 'Denied'])->assertForbidden();
@@ -142,7 +144,7 @@ it('unions multiple membership roles without granting authority in another organ
     // A previously loaded relationship must not preserve revoked authority.
     $membership->load('roles.permissions');
     $editor->permissions()->detach();
-    expect($membership->hasPermission($organization, PermissionKey::OrganizationsUpdate))->toBeFalse();
+    expect(app(OrganizationAccess::class)->update($user->id, $organization->id)->outcome)->toBe(AccessDecision::FORBIDDEN);
     $this->patchJson('/api/v1/organizations/'.$organization->id, ['name' => 'Revoked'])->assertForbidden();
     expect($organization->fresh()->owner_user_id)->not->toBe($user->id);
 });
@@ -164,7 +166,7 @@ it('rejects cross-organization role assignment in the domain and database', func
 it('enforces RBAC uniqueness references and application-defined keys in PostgreSQL', function () {
     $organization = rbacOrganization();
     $membership = $organization->memberships()->sole();
-    $role = app(SaveRole::class)->handle($organization, null, 'Editors', ['organizations.update']);
+    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Editors', ['organizations.update']);
     app(AssignMembershipRole::class)->handle($membership, $role);
     $missing = '01AAAAAAAAAAAAAAAAAAAAAAAA';
     foreach ([
@@ -192,7 +194,7 @@ it('enforces RBAC uniqueness references and application-defined keys in PostgreS
 
 it('cascades dependent links intentionally without deleting permissions or unrelated roles', function () {
     $organization = rbacOrganization();
-    $role = app(SaveRole::class)->handle($organization, null, 'Disposable', ['roles.view']);
+    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Disposable', ['roles.view']);
     $member = $organization->memberships()->create(['user_id' => User::factory()->create()->id]);
     app(AssignMembershipRole::class)->handle($member, $role);
     $member->delete();
@@ -201,7 +203,7 @@ it('cascades dependent links intentionally without deleting permissions or unrel
     $role->delete();
     expect(DB::table('organization_membership_role')->where('role_id', $role->id)->count())->toBe(0);
     expect(DB::table('role_permission')->where('role_id', $role->id)->count())->toBe(0);
-    $role = app(SaveRole::class)->handle($organization, null, 'Cascade', ['roles.view']);
+    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Cascade', ['roles.view']);
     app(AssignMembershipRole::class)->handle($organization->memberships()->sole(), $role);
     $organization->delete();
     DB::statement('SET CONSTRAINTS organizations_owner_membership_foreign IMMEDIATE');
@@ -219,8 +221,8 @@ it('preserves pre-RBAC ownership across migration rollback and reapply without o
     expect($organization->fresh()->owner_user_id)->toBe($ownerId);
     expect($organization->roles()->count())->toBe(0);
     $membership = $organization->memberships()->sole();
-    foreach (PermissionKey::cases() as $permission) {
-        expect($membership->hasPermission($organization, $permission))->toBeTrue();
+    foreach (['update', 'viewRoles', 'manageRoles'] as $ability) {
+        expect(app(OrganizationAccess::class)->$ability($ownerId, $organization->id)->outcome)->toBe(AccessDecision::ALLOWED);
     }
     expect($membership->roles()->count())->toBe(0);
     $this->actingAs($organization->owner);
@@ -230,11 +232,11 @@ it('preserves pre-RBAC ownership across migration rollback and reapply without o
 
 it('rolls back the entire role mutation on a permission write failure and handles duplicate races', function () {
     $organization = rbacOrganization();
-    $role = app(SaveRole::class)->handle($organization, null, 'Stable', ['roles.view']);
-    expect(fn () => app(SaveRole::class)->handle($organization, $role, 'Changed', ['unknown']))->toThrow(QueryException::class);
+    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Stable', ['roles.view']);
+    expect(fn () => app(SaveRole::class)->handle($organization->owner_user_id, $organization, $role, 'Changed', ['unknown']))->toThrow(QueryException::class);
     expect($role->fresh()->name)->toBe('Stable');
     expect($role->permissions()->pluck('key')->all())->toBe(['roles.view']);
-    expect(fn () => app(SaveRole::class)->handle($organization, null, 'stable', []))->toThrow(ValidationException::class);
+    expect(fn () => app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'stable', []))->toThrow(ValidationException::class);
     expect($organization->roles()->count())->toBe(1);
 });
 
@@ -245,11 +247,11 @@ it('never interprets a role name as ownership and does not trust spoofed in-memo
     $membership = $organization->memberships()->create(['user_id' => $user->id]);
     $role = $organization->roles()->create(['name' => 'Owner']);
     app(AssignMembershipRole::class)->handle($membership, $role);
-    expect($membership->hasPermission($organization, PermissionKey::OrganizationsUpdate))->toBeFalse();
+    expect(app(OrganizationAccess::class)->update($user->id, $organization->id)->outcome)->toBe(AccessDecision::FORBIDDEN);
     $membership->user_id = $organization->owner_user_id;
-    expect($membership->hasPermission($organization, PermissionKey::OrganizationsUpdate))->toBeFalse();
+    expect(app(OrganizationAccess::class)->update($user->id, $organization->id)->outcome)->toBe(AccessDecision::FORBIDDEN);
     $membership->organization_id = $other->id;
-    expect($membership->hasPermission($other, PermissionKey::RolesView))->toBeFalse();
+    expect(app(OrganizationAccess::class)->viewRoles($user->id, $other->id)->outcome)->toBe(AccessDecision::HIDDEN);
     $this->actingAs($user);
     $this->postJson('/api/v1/organizations/'.$organization->id.'/roles', ['name' => 'Escalation', 'permissions' => []])->assertForbidden();
     expect($organization->fresh()->owner_user_id)->not->toBe($user->id);

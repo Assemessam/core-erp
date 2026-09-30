@@ -48,16 +48,15 @@ it('renames the supplied model without changing ownership memberships roles or p
     $owner = User::factory()->create();
     $organization = app(CreateOrganization::class)->handle($owner, 'Original');
     $member = $organization->memberships()->create(['user_id' => User::factory()->create()->id]);
-    $role = app(SaveRole::class)->handle($organization, null, 'Editor', ['organizations.update', 'roles.view']);
+    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Editor', ['organizations.update', 'roles.view']);
     app(AssignMembershipRole::class)->handle($member, $role);
     $memberships = $organization->memberships()->orderBy('id')->get()->toArray();
     $roles = $organization->roles()->with('permissions')->orderBy('id')->get()->toArray();
     $assignments = DB::table('organization_membership_role')->where('organization_id', $organization->id)->get()->toArray();
 
-    // No HTTP request, Gate call, or authenticated actor is needed by this transitional operation.
-    // The existing Form Request/Policy remains responsible for authorization and validation.
+    // Explicit actor authorization works without an HTTP request or ambient login.
     expect(auth()->check())->toBeFalse();
-    $result = (new RenameOrganization)->handle($organization, 'Renamed');
+    $result = app(RenameOrganization::class)->handle($owner->id, $organization, 'Renamed');
 
     expect($result)->toBe($organization);
     expect($organization->fresh()->name)->toBe('Renamed');

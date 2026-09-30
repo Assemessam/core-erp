@@ -1,5 +1,7 @@
 <?php
 
+use App\Modules\Organization\Application\Authorization\AccessDenied;
+use App\Modules\Organization\Infrastructure\Authorization\AccessResponse;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -16,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectGuestsTo(fn (Request $request) => $request->expectsJson() ? null : config('app.frontend_url').'/login');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->map(AccessDenied::class, AccessResponse::exception(...));
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*') || $request->expectsJson(),
         );

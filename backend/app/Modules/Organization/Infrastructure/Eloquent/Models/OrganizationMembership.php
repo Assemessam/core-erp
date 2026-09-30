@@ -3,7 +3,6 @@
 namespace App\Modules\Organization\Infrastructure\Eloquent\Models;
 
 use App\Models\User;
-use App\Modules\Organization\Domain\Authorization\PermissionKey;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -17,23 +16,6 @@ class OrganizationMembership extends Model
     {
         return $this->belongsToMany(Role::class, 'organization_membership_role')
             ->withPivot('organization_id');
-    }
-
-    public function hasPermission(Organization $organization, PermissionKey $permission): bool
-    {
-        // Requery persisted identity/ownership; do not trust cached relationships.
-        $membership = self::query()->whereKey($this->getKey())
-            ->where('organization_id', $organization->getKey())->first();
-        if ($membership === null) {
-            return false;
-        }
-
-        if ($membership->organization()->where('owner_user_id', $membership->user_id)->exists()) {
-            return true;
-        }
-
-        return $membership->roles()->where('roles.organization_id', $organization->getKey())
-            ->whereHas('permissions', fn ($query) => $query->where('permissions.key', $permission->value))->exists();
     }
 
     /** @return BelongsTo<Organization, $this> */

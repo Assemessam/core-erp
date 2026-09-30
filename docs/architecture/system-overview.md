@@ -15,22 +15,25 @@ In local development Vite forwards API, Sanctum CSRF, and Fortify routes to Lara
 
 ## Current structure and architecture groundwork
 
-Phase 1.3 is implemented. Phase 1.3.5A established guardrails, B extracted listing/rename operations, and **C mechanically moved Organization into `App\Modules\Organization`**. Identity (including User, Fortify, and `/me`) and platform health/readiness remain in conventional namespaces.
+Phase 1.3 is implemented. Phase 1.3.5A established guardrails, B extracted listing/rename operations, C mechanically moved Organization into `App\Modules\Organization`, and **D centralized Organization authorization**. Identity (including User, Fortify, and `/me`) and platform health/readiness remain in conventional namespaces.
 
 | Current module layer | Contents |
 | --- | --- |
 | Domain/Authorization | Pure `PermissionKey` enum only |
+| Application/Authorization | OrganizationAccess, AccessDecision, AccessDenied |
 | Application/Commands | CreateOrganization, RenameOrganization, SaveRole |
 | Application/Operations | AssignMembershipRole |
 | Application/Queries | ListOrganizations |
 | Infrastructure/Eloquent/Models | Organization, OrganizationMembership, Role, Permission |
-| Infrastructure/Authorization | OrganizationPolicy, unchanged authorization implementation |
+| Infrastructure/Authorization | OrganizationPolicy adapter and AccessResponse Laravel translation |
 | Infrastructure/Providers | OrganizationServiceProvider, explicit model-to-policy registration |
 | Presentation/Http | Existing two controllers, three Form Requests, three Resources |
 
-OrganizationController still delegates listing, creation, and rename; show authorizes the route-bound model. Rename takes an already-authorized model; caller validation/authorization remain required. Eloquent lives intentionally in Infrastructure and is used directly by lightweight Application paths. No repository, mapper, pure aggregate, transaction abstraction, or additional RBAC query extraction was introduced. Policy centralization and membership permission extraction have **not** occurred.
+OrganizationController delegates listing, creation, and rename; show authorizes the route-bound model. RenameOrganization and SaveRole now receive an explicit actor ID and independently require OrganizationAccess approval before mutation. Form Requests still authorize early through Policies before input validation. Both boundaries use the same persisted decision logic. Eloquent remains in Infrastructure and lightweight Application paths use it directly.
 
-Temporary dependencies retained by C are explicit: model owner/user relationships and the Policy reference `App\Models\User`; CreateOrganization accepts that explicit owner and reads its key without mutating Identity; Presentation uses User for authenticated input checks. User's inverse membership relationship imports the moved model. SaveRole retains `abort_if` for foreign-role rejection; SaveRole and AssignMembershipRole retain ValidationException. Architecture exceptions cover those exact dependency pairs, not whole namespace exclusions. Later authorized checkpoints must review these boundaries.
+OrganizationAccess accepts actor and organization IDs. AccessDecision distinguishes ALLOWED, HIDDEN and FORBIDDEN and carries the existing application-owned denial message. Policies translate decisions through AccessResponse; Application writes throw AccessDenied on denial. A narrowly registered exception mapping in bootstrap/app.php reuses AccessResponse to produce Laravel AuthorizationException, preserving the existing HTTP renderer and 404/403 distinction. The evaluator never invokes Gate, Policies, ambient authentication, or HTTP helpers.
+
+Remaining temporary dependencies: Infrastructure owner/user relationships and the Policy reference `App\Models\User`; CreateOrganization accepts the explicit owner and reads its key; Presentation uses User for authenticated input. User retains its inverse membership relationship. SaveRole and AssignMembershipRole still use ValidationException for their existing non-authorization errors. The SaveRole abort_if exception is removed. Domain invariant extraction, broader RBAC read-query extraction, and Identity migration remain deferred.
 
 ## Target architecture (partially implemented)
 
@@ -41,9 +44,9 @@ Temporary dependencies retained by C are explicit: model owner/user relationship
 - Modules have Domain, Application, Infrastructure, and Presentation layers only where actual code needs them. No empty future ERP modules or Shared Kernel are created.
 - Domain remains framework-independent. Lightweight Application paths may use same-module Eloquent and Laravel transactions; richer aggregates/repositories are introduced only when actual invariants justify them. This is not strict Clean Architecture everywhere.
 - Controllers invoke direct write use cases/queries. Reads may use efficient Eloquent/query-builder/SQL. No buses, event sourcing, separate read database, or new domain events.
-- Policies remain Laravel adapters; a later checkpoint will centralize access decisions for reuse. Explicit tenant scope, constraints, binding, authorization ordering, and transaction semantics remain authoritative.
+- Policies are Laravel adapters over the shared Organization access evaluator. Explicit tenant scope, constraints, binding, authorization ordering, and transaction semantics remain authoritative.
 
-Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. Identity migration, remaining application extraction, and the evaluator are future checkpoints, each requiring authorization.
+Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. Identity migration and remaining domain/application extraction are future checkpoints, each requiring authorization.
 
 ## HTTP contract
 
@@ -75,7 +78,11 @@ The SPA selects context through `/app/organizations/{organizationId}` and reload
 
 Phase 1.3 relates organization memberships to organization roles through a pivot with two composite foreign keys. PostgreSQL requires the membership and role to belong to the same organization, independently of HTTP validation. Roles relate to application-defined permission records through a unique relational pivot. `PermissionKey` defines `organizations.update` and `roles.view`; the versioned migration inserts those keys and a database check rejects arbitrary keys.
 
-`OrganizationMembership::hasPermission(organization, permission)` evaluates the union of assigned roles after confirming persisted membership in that organization. Explicit owners pass without an Owner role. `OrganizationPolicy` delegates capability checks to that method, retains membership-only workspace viewing, and reserves role writes for the explicit owner. No default roles or ownership backfill are needed. Permission evaluation queries current records; caching is deferred. Lists eager-load grants.
+`OrganizationAccess` now owns the actor rules previously distributed across OrganizationPolicy and OrganizationMembership::hasPermission (the model method was removed). Workspace viewing requires membership. Updating requires explicit ownership or `organizations.update`; role/catalog reading requires ownership or `roles.view`; role creation/editing remains owner-only. Ownership comes from persisted `organizations.owner_user_id`, never a role name or supplied owner flag.
+
+Each decision queries persisted membership and ownership together. A non-owner permission decision uses a second tenant-scoped EXISTS query across assigned roles and permissions. No loaded relationship collection or permission cache participates; revocation is visible on the next check. Role unions remain intact. Membership is required even for owners, consistent with the deferred database invariant. One decision needs one or two queries independent of the number of roles; ListOrganizations remains its existing membership-scoped query without per-row evaluation.
+
+Identity authentication/verification remain HTTP middleware responsibilities; Application callers supply trusted actor identity and validated inputs. Authorization checks are fresh at invocation, not a new concurrency guarantee: transaction isolation and role-write locking are unchanged, and concurrent revocation after a decision is not serialized by this checkpoint.
 
 The Roles & Permissions SPA route is `/app/organizations/{organizationId}/roles`. It lists roles and allows owners to create/edit names and permission sets. Readers with `roles.view` receive a read-only catalog. The API's `can_manage` flag is a presentation hint only. This view keeps API results locally and discards stale responses after tenant navigation. Membership-role assignment is internal and tested, with no public assignment or member-management API until Phase 1.4.
 

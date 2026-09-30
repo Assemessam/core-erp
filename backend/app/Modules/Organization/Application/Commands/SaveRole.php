@@ -2,6 +2,8 @@
 
 namespace App\Modules\Organization\Application\Commands;
 
+use App\Modules\Organization\Application\Authorization\AccessDecision;
+use App\Modules\Organization\Application\Authorization\OrganizationAccess;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Role;
 use Illuminate\Database\QueryException;
@@ -10,10 +12,16 @@ use Illuminate\Validation\ValidationException;
 
 class SaveRole
 {
+    public function __construct(private readonly OrganizationAccess $access) {}
+
     /** @param list<string> $permissions */
-    public function handle(Organization $organization, ?Role $role, string $name, array $permissions): Role
+    public function handle(int $actorUserId, Organization $organization, ?Role $role, string $name, array $permissions): Role
     {
-        abort_if($role !== null && $role->organization_id !== $organization->getKey(), 404);
+        // Resource scope is independent of actor authority, just as scoped HTTP binding is.
+        if ($role !== null && $role->organization_id !== $organization->getKey()) {
+            AccessDecision::hidden()->requireAllowed();
+        }
+        $this->access->manageRoles($actorUserId, $organization->id)->requireAllowed();
 
         try {
             return DB::transaction(function () use ($organization, $role, $name, $permissions): Role {

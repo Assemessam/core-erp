@@ -423,3 +423,136 @@ No intentional Organization/RBAC logic, authorization, route binding, transactio
 Review explicit provider registration, User relationship imports, the three narrow Application exception pairs, and new module files. Plain unstaged Git diff shows deletions and excludes new module files; inspect untracked files alongside it (no staging solely for rename detection). Local checks do not establish production or hosted-CI results.
 
 Recommended D, subject to separate approval: a focused Organization authorization-boundary extraction with adversarial isolation/revocation tests; separately decide legacy HTTP error translation and the membership tenant invariant. Do not combine this with Identity migration or Phase 1.4. **C stops here; D has not begun.**
+
+# Phase 1.3.5D — Centralize Organization Authorization
+
+- Date: 2026-10-01
+- Status: D complete against local validation; later 1.3.5 checkpoints and Phase 1.4 have not started.
+- Baseline: clean `refactor/ddd-architecture`, `4ef7b49` (`refactor: move organization context into module`). No staging, commits, pushes, branch changes, resets or discarded work.
+
+## Design and centralized rules
+
+OrganizationAccess is the single Application evaluator used by OrganizationPolicy and authorized write use cases. Its four methods accept trusted explicit integer actor ID and string organization ID; it never reads ambient identity or invokes Gate/Policy/HTTP code.
+
+| Ability | Rule after persisted membership is established |
+| --- | --- |
+| view | Membership allows |
+| update | Explicit persisted owner or union of roles granting organizations.update |
+| viewRoles | Explicit persisted owner or union of roles granting roles.view |
+| manageRoles | Explicit persisted owner only |
+
+No membership (or missing organization) yields HIDDEN. Membership with insufficient authority yields FORBIDDEN. Owners require membership too; the existing deferred owner-membership FK still enforces this at commit. No Owner role, synthetic grants, new catalog keys, caching, or member-administration capabilities.
+
+AccessDecision is a small immutable result with a private constructor, named factories and three outcomes: ALLOWED, HIDDEN, FORBIDDEN. Forbidden decisions carry the existing message. `requireAllowed()` throws the module-specific AccessDenied runtime exception, carrying the decision without HTTP status/response dependencies.
+
+OrganizationPolicy now only passes IDs to the evaluator and adapts its result through Infrastructure/Authorization/AccessResponse. It no longer queries membership, ownership, roles or permissions. AccessResponse maps allowed/hidden/forbidden to Laravel allow/denyAsNotFound/deny. bootstrap/app.php registers one exception mapping, only for AccessDenied, through that same adapter into AuthorizationException. Laravel's existing JSON renderer preserves HIDDEN → 404 `Not Found`; FORBIDDEN → 403 with the existing capability or owner-only message. Unrelated exception behavior is untouched.
+
+OrganizationMembership::hasPermission was removed, with its tests ported to the evaluator's explicit actor API. Membership models retain persistence relationships only. The evaluator loads persisted membership/ownership using one scoped organization query with a membership EXISTS predicate; non-owner permission checks use a second EXISTS query over tenant-filtered memberships, roles and permission keys. This preserves multiple-role unions and ignores stale/spoofed models and loaded relationship collections. Ownership comes from persisted organizations.owner_user_id. There is no per-role iteration or cache; each decision costs one or two queries. No brittle SQL/count assertions were added.
+
+## Protected writes and unchanged boundaries
+
+RenameOrganization and SaveRole now require an explicit actor ID and independently evaluate authority before mutation. Controllers pass the authenticated user's ID, not request payload flags. Form Requests retain their unchanged early Policy authorization, preserving denial-before-validation. Re-evaluation at the write boundary is intentional: there is one implementation of the rule, consulted by two entry boundaries.
+
+SaveRole's cross-organization role guard remains a resource-scope rejection independent of actor authorization. It now raises a HIDDEN Application denial instead of abort_if; scoped HTTP binding remains the first nested-resource boundary. Its transaction, row lock, permission replacement, duplicate conflict handling and rollback are unchanged. The locked query still scopes the persisted role to its parent even if a caller spoofs a role object's organization attribute.
+
+CreateOrganization, AssignMembershipRole and ListOrganizations are unchanged. Creation still receives the explicit owner and creates membership transactionally; assignment remains internal and protects the same tenant invariant; listing remains one explicitly actor-scoped query without per-row access decisions. RBAC read queries were not extracted. Domain invariant extraction remains deferred.
+
+SaveRole and AssignMembershipRole retain their narrow ValidationException dependencies for existing non-authorization errors. Application has no abort/abort_if authorization calls. Architecture rules remove the SaveRole exception and forbid Gate, access contracts and the Infrastructure authorization adapters, in addition to existing HTTP/ambient-helper bans. Same-module Eloquent/DB and the existing CreateOrganization→User exception remain intentional. Domain stays framework-independent.
+
+Authentication and email verification remain Identity/HTTP middleware responsibilities; the evaluator decides Organization capabilities for a trusted explicit identity, not login/session validity. Application callers must still validate names/permissions and supply trusted IDs/models. This is not a redesign of input validation. Authorization reads are fresh per call, but this checkpoint does not serialize concurrent revocation after a decision or change transaction isolation. Existing concurrency semantics/locks remain in place.
+
+## Files created and modified
+
+Created under `backend/`:
+
+- app/Modules/Organization/Application/Authorization/OrganizationAccess.php
+- app/Modules/Organization/Application/Authorization/AccessDecision.php
+- app/Modules/Organization/Application/Authorization/AccessDenied.php
+- app/Modules/Organization/Infrastructure/Authorization/AccessResponse.php
+- tests/Feature/Application/OrganizationAccessTest.php
+- tests/Feature/Application/OrganizationWriteAuthorizationTest.php
+
+Modified: RenameOrganization, SaveRole, OrganizationPolicy, OrganizationMembership, both Organization HTTP controllers, bootstrap/app.php, tests/Architecture/BoundariesTest.php, tests/Feature/Application/OrganizationOperationsTest.php and tests/Feature/RbacTest.php. README's status summary, system overview, roadmap and this record reflect D. ADR 0005 remains unchanged because this implements its approved authorization direction. No provider, route, Form Request, Resource, migration, seed, dependency, Identity, frontend or permission-catalog changes.
+
+## Security test evidence
+
+Added 19 PostgreSQL-backed cases across two files:
+
+- Evaluator covers all four abilities for owner, member and outsider, missing organization, no owner roles, multi-role unions, role/permission/member revocation, stale relationships and spoofed in-memory ownership/membership data.
+- Policy parity covers all abilities and allowed/hidden/forbidden decisions and stable messages.
+- Separate stale-ownership test changes persisted ownership through a separate model and verifies both evaluator and Policy see the new owner. Removing that owner's membership transiently inside the existing rollback transaction hides all abilities; the deferred FK would prevent committing that state.
+- Direct rename matrix covers owner/editor success, ordinary member forbidden and non-member hidden, despite an ambient owner login. Additional cases cover immediate revocation, spoofed objects, and permissions/ownership elsewhere.
+- Direct role-write matrix tests both create and update: only owner succeeds; ordinary member, both-permission holder (even with a role named Owner), and owner of another organization are denied. Failed writes preserve names, grants, role counts and ownership.
+- Direct foreign-role writes are hidden; spoofed in-memory tenant attributes cannot evade the persisted scoped lookup.
+- Four test-only HTTP routes exercise real Application denial translation without a Policy/Form Request. They verify exact 403/404 messages and no mutation, without mocking OrganizationAccess. No test routes were added to production routing.
+
+Existing RBAC assertions now target explicit AccessDecision outcomes; a redundant cross-tenant permission assertion was replaced by checking that membership still grants view while denying update. Existing HTTP, resource, nested-binding, database constraint, duplicate-race and rollback assertions remain. Tests use real persisted PostgreSQL state; no evaluator mocks or backend parallelism.
+
+Incremental results: baseline security/Application/Architecture **45 passed / 558 assertions**; evaluator first **1 / 24**; Policy conversion plus existing feature/characterization **32 / 404**; rename protection plus full targeted HTTP set **44 / 447**; role protection/Architecture **63 / 693**. A final ownership edge case brought the full suite to the result below. A test assertion readability refinement was followed by RBAC **12 / 113** and Pint passing.
+
+During incremental validation, Laravel rejected an array callable for exception mapping. Replaced it with the supported first-class Closure (`AccessResponse::exception(...)`). The targeted tests then passed; no framework override or unrelated exception change was needed.
+
+## Final validation
+
+| Check | Result |
+| --- | --- |
+| Complete backend quality / Pest | **84 passed, 796 assertions**, no skips |
+| Architecture separately | **9 passed, 189 assertions**, no skips |
+| Pint | Passed, 74 files |
+| Larastan/PHPStan | Level 8, 46 files, no errors |
+| Composer strict validate / platform checks | Passed |
+| Composer audit | No security vulnerability advisories |
+| Frontend quality | ESLint, Prettier, vue-tsc, **28 Vitest tests / 7 files**, production build passed |
+| npm audit | 0 vulnerabilities |
+| Complete pinned Playwright | **3 passed**, existing two browser workers |
+| Infrastructure | Compose valid; all five services healthy; PostgreSQL accepting, Redis PONG, Mailpit HTTP 200, health/API/proxy status ok |
+| Routes | Before/after API route JSON byte-identical (cmp), all 11 entries |
+| Migrations | All three historical migrations Ran; no migration executed |
+| Git | diff --check passed; migration/frontend diffs empty |
+
+## Commands executed
+
+Read-only inspection used cat/rg over guidance, ADR, full checkpoint history, module classes, tests and Laravel's installed exception implementation; Git branch/status/log/show/diff checks. Substantive validation commands (some repeated at incremental boundaries):
+
+```sh
+docker compose exec -T backend php artisan route:list --path=api --json
+docker compose exec -T backend php vendor/bin/pest tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php tests/Feature/ArchitectureCharacterizationTest.php tests/Feature/Application tests/Architecture --compact
+docker compose exec -T backend php vendor/bin/pest tests/Feature/Application/OrganizationAccessTest.php --compact
+docker compose exec -T backend php vendor/bin/pest tests/Feature/Application/OrganizationAccessTest.php tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php tests/Feature/ArchitectureCharacterizationTest.php --compact
+docker compose exec -T backend php vendor/bin/pest tests/Feature/Application tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php tests/Feature/ArchitectureCharacterizationTest.php --compact
+docker compose exec -T backend php vendor/bin/pest tests/Feature/Application tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php tests/Feature/ArchitectureCharacterizationTest.php tests/Architecture --compact
+docker compose exec -T backend php vendor/bin/pint app/Modules/Organization/Application/Authorization app/Modules/Organization/Application/Commands/RenameOrganization.php app/Modules/Organization/Application/Commands/SaveRole.php app/Modules/Organization/Infrastructure/Authorization app/Modules/Organization/Infrastructure/Eloquent/Models/OrganizationMembership.php app/Modules/Organization/Presentation/Http/Controllers bootstrap/app.php tests/Architecture/BoundariesTest.php tests/Feature/Application tests/Feature/RbacTest.php
+docker compose exec -T backend composer quality
+docker compose exec -T backend php vendor/bin/pest --testsuite=Architecture --compact
+docker compose exec -T backend php vendor/bin/pest tests/Feature/RbacTest.php --compact
+docker compose exec -T backend php vendor/bin/pint --test tests/Feature/RbacTest.php
+docker compose exec -T backend composer validate --strict
+docker compose exec -T backend composer check-platform-reqs
+docker compose exec -T backend composer audit
+docker compose exec -T frontend npm run quality
+docker compose exec -T frontend npm audit
+docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test
+cmp /tmp/coreerp-d-routes-before.json /tmp/coreerp-d-routes-after.json
+docker compose exec -T backend php artisan migrate:status
+docker compose config --quiet
+docker compose ps
+docker compose exec -T postgres pg_isready -U coreerp
+docker compose exec -T redis redis-cli ping
+curl --fail --silent --show-error http://localhost:8088/api/v1/health
+curl --fail --silent --show-error http://localhost:8088/api/v1/ready
+curl --fail --silent --show-error http://localhost:5174/api/v1/ready
+curl --fail --silent --show-error -o /dev/null -w 'Mailpit HTTP %{http_code}\n' http://localhost:8026/
+git diff --check
+git diff -- backend/database/migrations
+git diff -- frontend
+git status --short
+git diff --stat
+```
+
+## Compatibility, limitations and review
+
+Guest 401, unverified 403, hidden non-member 404, unauthorized member 403, foreign nested role 404-before-validation, resource envelopes/statuses/ordering and meta.can_manage remain covered and unchanged. Missing-model namespace wording remains as recorded in C; this checkpoint does not normalize 404s. Direct write invocation intentionally now requires actor authorization. Database schema/history, frontend, routes, middleware, catalog, Form Requests and Resources are unchanged. Browser fixture data and ignored build/cache output are normal test artifacts; production/hosted CI were not exercised.
+
+Review the trusted actor inputs, persisted ownership/membership queries, resource-scope vs actor-access distinction in SaveRole, the exception adapter/registration, and direct-denial tests. Static guards are not complete data-flow/security proofs. Existing cross-origin PATCH/CORS and test-database isolation follow-ups remain deferred. The final plain diff stat excludes six untracked files; inspect those files too.
+
+Recommend a separately approved small checkpoint for pure membership-role tenant-invariant extraction and its error translation, while retaining the security tests established here. Identity migration should remain independently reviewable. **D ends here; no next checkpoint or Phase 1.4 work has begun.**

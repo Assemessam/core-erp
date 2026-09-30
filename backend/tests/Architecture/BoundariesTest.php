@@ -83,11 +83,10 @@ it('keeps Application independent of HTTP delivery when introduced', function ()
         ...$presentationNamespaces,
         'Illuminate\\Http', 'Illuminate\\Foundation\\Http', 'Illuminate\\Routing',
         'Symfony\\Component\\HttpFoundation', 'Symfony\\Component\\HttpKernel\\Exception',
-        Auth::class, Session::class,
-        'auth', 'request', 'response', 'session', 'abort', 'abort_unless',
+        Auth::class, Gate::class, Session::class, 'Illuminate\\Contracts\\Auth\\Access',
+        'App\\Modules\\Organization\\Infrastructure\\Authorization',
+        'auth', 'request', 'response', 'session', 'abort', 'abort_if', 'abort_unless',
     ]);
-    // C preserves SaveRole's existing foreign-role 404. Exempt only this dependency pair.
-    expect($applicationNamespaces)->not->toUse('abort_if')->ignoring(SaveRole::class);
     // Existing RBAC validation errors remain until a separately reviewed extraction.
     expect($applicationNamespaces)->not->toUse('Illuminate\\Validation\\ValidationException')
         ->ignoring([SaveRole::class, AssignMembershipRole::class]);
