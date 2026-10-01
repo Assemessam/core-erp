@@ -47,6 +47,8 @@ it('lets the owner create and edit roles with stable minimal representations', f
     $this->getJson($base.'/permissions')->assertExactJson(['data' => [
         ['key' => 'organizations.update', 'label' => 'Update organization details'],
         ['key' => 'roles.view', 'label' => 'View roles and permissions'],
+        ['key' => 'members.view', 'label' => 'View organization members'],
+        ['key' => 'members.invite', 'label' => 'Invite organization members'],
     ]]);
     $this->getJson($base.'/roles')->assertExactJson([
         'data' => [['id' => $role->id, 'name' => 'Readers', 'permissions' => []]],
@@ -216,10 +218,15 @@ it('cascades dependent links intentionally without deleting permissions or unrel
 
 it('preserves pre-RBAC ownership across migration rollback and reapply without owner roles', function () {
     $migration = require database_path('migrations/2026_09_30_000002_create_rbac_tables.php');
+    $lifecycle = require database_path('migrations/2026_10_01_000001_add_membership_lifecycle_and_invitations.php');
+    $lifecycle->down();
     $migration->down();
     $organization = rbacOrganization();
     $ownerId = $organization->owner_user_id;
     $migration->up();
+    DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
+    $lifecycle->up();
+    DB::statement('SET CONSTRAINTS ALL DEFERRED');
     expect($organization->fresh()->owner_user_id)->toBe($ownerId);
     expect($organization->roles()->count())->toBe(0);
     $membership = $organization->memberships()->sole();
@@ -269,5 +276,5 @@ it('never interprets a role name as ownership and does not trust spoofed in-memo
     $this->postJson('/api/v1/organizations/'.$organization->id.'/roles', ['name' => 'Escalation', 'permissions' => []])->assertForbidden();
     expect($organization->fresh()->owner_user_id)->not->toBe($user->id);
     expect(Permission::query()->orderBy('key')->pluck('key')->all())
-        ->toBe(array_column(PermissionKey::cases(), 'value'));
+        ->toBe(collect(PermissionKey::cases())->map(fn ($key) => $key->value)->sort()->values()->all());
 });

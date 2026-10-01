@@ -18,6 +18,16 @@ export function formFeedback(error: unknown): FormFeedback {
   }
 
   const status = error.response?.status
+  if (status === 403)
+    return {
+      message: 'You do not have permission for this action.',
+      fields: {},
+    }
+  if (status === 404)
+    return {
+      message: 'This organization could not be found or accessed.',
+      fields: {},
+    }
   if (status === 419) {
     return {
       message: 'Your session expired. Please submit the form again.',

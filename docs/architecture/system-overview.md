@@ -1,133 +1,95 @@
 # System overview
 
-CoreERP has two independently tooled applications in one Git repository:
+CoreERP is a pragmatic DDD-oriented modular monolith with independent Laravel and Vue applications:
 
 ```mermaid
 flowchart LR
-    SPA[Vue 3 SPA] -->|JSON /api/v1| API[Laravel 13 REST API]
-    API --> PG[(PostgreSQL 18)]
-    API --> Redis[(Redis 8)]
+    SPA[Vue SPA] -->|JSON /api/v1| API[Laravel API]
+    API --> Identity[Identity integration]
+    API --> Organization[Organization application]
+    Organization --> PG[(PostgreSQL 18)]
+    Identity --> PG
+    Identity --> Redis[(Redis sessions)]
+    Organization --> Mailpit[SMTP / local Mailpit]
+    Identity --> Mailpit
 ```
 
-The SPA owns presentation and navigation. Vue Router carries organization context; Axios handles HTTP; Pinia holds public authentication and organization state. Laravel owns the HTTP contract, authorization, and business rules. Controllers adapt requests, an Application command performs transactional organization creation, Policies authorize organization access, and API Resources shape responses. PostgreSQL stores users, recovery tokens, organizations, memberships, organization roles, permission definitions, and relational grants. Redis stores cache and server-side sessions. Mailpit catches development email.
+Phase 1.4 is implemented locally, awaiting review. It extends the completed Identity/Organization architecture with organization users and invitations. Phase 1.5 Audit Trail and later ERP/notification modules remain unimplemented. See [ADR 0005](../decisions/0005-ddd-modular-monolith-architecture.md), [ADR 0006](../decisions/0006-organization-membership-lifecycle-and-invitations.md), the [roadmap](../phases/phase-01-core-platform.md) and [validation record](../phases/phase-01-organization-users-validation.md).
 
-In local development Vite forwards API, Sanctum CSRF, and Fortify routes to Laravel. Sanctum reads the Laravel session. A production reverse proxy, TLS, deployment process, and scaling configuration remain outside this milestone.
+## Bounded contexts and layers
 
-## Implemented modular-monolith structure
+Identity owns credentials, registration, login/logout, email verification, password recovery and the current-user representation. Its existing Eloquent User, Fortify adapters/provider, HTTP responses and current-user controller/resource remain in Infrastructure and Presentation. No artificial Identity Domain/Application layers are needed. Identity has no Organization dependency.
 
-Phase 1.3 is implemented. Phase 1.3.5A established guardrails, B extracted listing/rename operations, C mechanically moved Organization into `App\Modules\Organization`, D centralized Organization authorization, and **E extracted the first pure Domain invariant and cleaned up Application failures**. **F mechanically moved Identity into `App\Modules\Identity`**. G removed the unnecessary CreateOrganization dependency on Identity User, narrowed boundary rules and removed empty global business directories. Platform health/readiness remain in conventional namespaces.
+Organization owns tenant identity, ownership, memberships, tenant roles/permissions/grants and invitations together. New functionality belongs in these layers:
 
-| Current module layer | Contents |
+| Layer | Responsibilities |
 | --- | --- |
-| Domain/Authorization | Pure `PermissionKey` enum |
-| Domain/Memberships | RoleAssignmentRules and CrossOrganizationRoleAssignment |
-| Application/Authorization | OrganizationAccess, AccessDecision, AccessDenied |
-| Application/Commands | CreateOrganization, RenameOrganization, SaveRole |
-| Application/Operations | AssignMembershipRole |
-| Application/Queries | ListOrganizations |
-| Application/Exceptions | RoleNameConflict |
-| Infrastructure/Eloquent/Models | Organization, OrganizationMembership, Role, Permission |
-| Infrastructure/Authorization | OrganizationPolicy adapter and AccessResponse Laravel translation |
-| Infrastructure/Providers | OrganizationServiceProvider, explicit model-to-policy registration |
-| Presentation/Http | Two controllers, three Form Requests, three Resources, OrganizationFailureMapper |
+| Domain | PermissionKey, MembershipStatus, InvitationState; pure role tenant compatibility, owner membership protection and verified invitation identity/lifecycle rules |
+| Application | Explicit actor/tenant authorization, commands, queries, transaction boundaries and row locking |
+| Infrastructure | Eloquent models/relationships, OrganizationPolicy/AccessResponse adapters, provider and synchronous SMTP invitation delivery |
+| Presentation | Thin HTTP controllers, authorization-first Form Requests, deliberate Resources and Domain/Application failure mapping |
 
-OrganizationController delegates listing, creation, and rename; show authorizes the route-bound model. RenameOrganization and SaveRole now receive an explicit actor ID and independently require OrganizationAccess approval before mutation. Form Requests still authorize early through Policies before input validation. Both boundaries use the same persisted decision logic. Eloquent remains in Infrastructure and lightweight Application paths use it directly.
+Application uses documented same-module Eloquent/DB lightweight paths and a concrete Organization SMTP adapter. Domain is framework-independent. No duplicate aggregates, repositories, buses, events, hidden model-observer workflows, generic Shared Kernel or future modules were introduced. Platform liveness/readiness remain outside business contexts. Migrations, routes, configuration, factories and seeders retain conventional Laravel locations.
 
-OrganizationAccess accepts actor and organization IDs. AccessDecision distinguishes ALLOWED, HIDDEN and FORBIDDEN and carries the existing application-owned denial message. Policies translate decisions through AccessResponse; Application writes throw AccessDenied on denial. A narrowly registered exception mapping in bootstrap/app.php reuses AccessResponse to produce Laravel AuthorizationException, preserving the existing HTTP renderer and 404/403 distinction. The evaluator never invokes Gate, Policies, ambient authentication, or HTTP helpers.
+Seven Organization adapters reference Identity User: Organization::owner, OrganizationMembership::user, OrganizationPolicy and four authenticated HTTP controllers (organization, role, member and invitation). Application receives explicit trusted user ID/email/verification values; it imports no Identity Infrastructure. Relationship-based member reads expose only deliberate User columns. Architecture allowlists are precise, not a general cross-context exception.
 
-Five narrow Organization adapters reference `Identity\Infrastructure\Eloquent\Models\User`: Organization::owner and OrganizationMembership::user persistence relationships, OrganizationPolicy actor type, and the two Organization controllers' authenticated-user assertions. CreateOrganization instead receives an explicit integer owner ID from the authenticated HTTP actor; it uses that ID for both organization ownership and atomic owner membership. Organization Application and Domain have no Identity dependency. The five existing adapters are individually allowlisted, not permission for general cross-context access or Identity mutation. The unused User::organizationMemberships inverse was removed in F. Identity has no Organization dependency. Broader RBAC read-query extraction is deferred.
+## Application and domain behavior
 
-## Identity module
+Existing `CreateOrganization`, `RenameOrganization`, `SaveRole`, `ListOrganizations` and internal `AssignMembershipRole` remain. New commands are `CreateInvitation`, `AcceptInvitation`, `RevokeInvitation`, `SyncMembershipRoles`, `SuspendMembership`, `ActivateMembership` and `RemoveMembership`. Internal `ResolveOrganizationRoles` and `LockManagedMembership` share only the concrete tenant/locking operations their callers need.
 
-Identity intentionally has Infrastructure and Presentation only; there is no artificial User aggregate, repository, Domain layer, or Application wrapper around Fortify.
+Controllers do not write business data or own transactions. Policies and directly invoked authorized writes reuse OrganizationAccess. Membership commands lock the organization then the scoped membership; invitation commands use organization then invitation. `AcceptInvitation` validates the token, verified matching email, state and expiration before creating the membership, calling AssignMembershipRole for all grants and marking the invitation accepted inside one transaction. Existing membership is always rejected, including suspended membership.
 
-- `Infrastructure/Eloquent/Models/User` retains Authenticatable, MustVerifyEmail, notifications, hashing, hidden/fillable fields and casts. `config/auth.php` points to this model without changing guards or password brokers.
-- `Infrastructure/Fortify` contains CreateNewUser, ResetUserPassword and PasswordRules unchanged apart from namespaces/imports.
-- `Infrastructure/Providers/FortifyServiceProvider` retains action/response bindings, login throttling, root/reset URL generation and SPA configuration; bootstrap/providers.php explicitly registers it.
-- `Presentation/Http/Resources/UserResource` and `Responses/{LoginResponse,PasswordResetLinkResponse}` preserve their representations. The trivial invokable CurrentUserController replaces the `/api/v1/me` closure with the same authenticated-user-to-resource expression and `auth:sanctum` middleware. Unverified users can still read `/me`.
-- Central `database/factories/UserFactory` explicitly sets its model; User explicitly declares `UseFactory(UserFactory::class)`. Tests import the moved User; the empty central seeder requires no change.
+Domain tests do not boot Laravel or touch a database. `MembershipRules` rejects owner suspension/removal. `InvitationRules` normalizes email, requires a verified matching identity and checks the pending/unexpired state using supplied time. `RoleAssignmentRules` requires same-organization grants. PostgreSQL independently protects these persistence invariants where practical; pure rules do not replace constraint tests.
 
-The SPA still uses CSRF cookies, Laravel session authentication, Redis sessions and Sanctum stateful access. Password reset, email verification, account-enumeration protection, resource fields and HTTP status codes are unchanged. No frontend, session/Sanctum/Fortify configuration, schema, migration, or dependency changes accompany this migration.
+## Tenancy, membership and authorization
 
-## Application dependencies and entry points
+Organizations use public ULIDs in a shared schema. Membership IDs retain existing bigint conventions; invitation and role IDs are ULIDs. Tenant context comes explicitly from the route/use-case arguments, never a global, session-selected tenant, User current organization or browser storage. All future tenant-owned tables must carry scoped keys and authorization.
 
-Organization Application has no Identity, HTTP, Gate or Policy imports. Its documented lightweight Eloquent dependencies are Organization (CreateOrganization, RenameOrganization, SaveRole, OrganizationAccess, ListOrganizations), OrganizationMembership (OrganizationAccess and AssignMembershipRole), and Role (SaveRole and AssignMembershipRole). ListOrganizations uses Eloquent Collection; CreateOrganization and SaveRole use Laravel DB transactions; SaveRole handles QueryException for the existing unique-name conflict. These are intentional current paths, not pure domain code or a generic repository layer. Revisit aggregate persistence when real business workflows justify it.
+Memberships now have `active`/`suspended` status. Suspension retains roles but removes organization access and effective RBAC on subsequent checks. ListOrganizations includes active memberships only. Reactivation reuses the existing membership and grants. Removal deletes membership and cascades its grant links, leaving User and Role definitions intact.
 
-CreateOrganization is a bootstrap command: the HTTP adapter supplies the authenticated actor ID, never a client owner field. RenameOrganization and SaveRole are public write use cases that recheck OrganizationAccess on direct invocation. AssignMembershipRole is an internal operation whose future caller must authorize membership administration; it has no route. ListOrganizations is a tenant-scoped Application query. Role and permission catalog reads remain small Policy-protected Eloquent/enum reads in the HTTP adapter, with `meta.can_manage` derived through Gate. No query bus or query classes are added for symmetry.
+Owner identity remains the explicit `owner_user_id`, independent of roles. The owner must have an active membership. The original deferred owner-membership FK is retained and strengthened by a second deferred composite active-status FK. Creation still inserts organization and owner membership atomically. No ownership transfer/deletion workflow exists.
 
-Global `app/Http/Controllers/{Controller,HealthController}`, `app/Http/Resources/HealthResource`, `app/Providers/AppServiceProvider`, and `app/Services/ReadinessCheck` remain platform code. Central routes, database factories/seeders and migrations retain Laravel conventions. Empty global Actions, Models, Enums, Policies, Queries, Http/Requests and Http/Responses directories were removed.
+OrganizationAccess queries persisted membership/ownership and, when needed, tenant-scoped permission EXISTS. There is no cache or reliance on loaded grants. ALLOWED, HIDDEN and FORBIDDEN remain the decision vocabulary: guests receive 401; unverified users 403; non-members and suspended members 404; active members lacking authority 403.
 
-## Domain invariant and Application failures
+| Capability | Authority |
+| --- | --- |
+| Workspace | Active member |
+| Rename | Owner or `organizations.update` |
+| Role/catalog read | Owner or `roles.view` |
+| Role definition writes | Owner only |
+| Member list | Owner or `members.view` |
+| Invitation list and roleless issuance/revocation/reinvite | Owner or `members.invite` |
+| Invitation role selection, or replacing/revoking role-bearing invitations | Owner only |
+| Member role synchronization and lifecycle | Owner only |
 
-RoleAssignmentRules requires exact equality between explicit membership and role organization ID strings and raises CrossOrganizationRoleAssignment on mismatch. It has no framework, persistence, or HTTP dependencies. Pure Unit tests run without Laravel or PostgreSQL. AssignMembershipRole remains internal: callers supply the already-loaded records and authorize membership administration; the operation invokes the rule and performs the existing idempotent pivot synchronization. It adds no actor authorization, lookup, endpoint, or transaction. PostgreSQL composite foreign keys remain the final integrity boundary, including when supplied model attributes are stale or spoofed. The pure check gives an early business failure; it cannot verify persisted state by itself.
+Role names never confer ownership. Permission keys are enum-defined and migration-allowlisted. Two new keys have real behavior; no generic `members.manage` or future permission exists. Frontend capability flags only guide presentation.
 
-SaveRole retains OrganizationAccess authorization, tenant-scoped row lookup, transaction, row locking and grant replacement. Its permission arguments are now variadic PermissionKey enum values. SaveRoleRequest converts validated strings after its unchanged authorization and validation; the HTTP payload remains an array of strings. Direct callers pass enums (or no permission arguments to clear grants); invalid runtime types fail before mutation. The database allowlist and permission foreign key still protect direct SQL corruption.
+## Invitation security and persistence
 
-The existing PostgreSQL duplicate-name detection now raises RoleNameConflict after rollback. OrganizationFailureMapper in Presentation maps that specific failure to Laravel's existing 422 name-field validation response; it maps CrossOrganizationRoleAssignment to the existing role-field response. bootstrap/app.php registers the two exact mappings. Domain/Application failures contain no HTTP codes or JSON construction. Unknown HTTP keys remain Form Request errors, while a direct caller passing a string instead of an enum is a programming TypeError, not an HTTP validation result. Unrelated database failures still propagate normally. No generic exception hierarchy or repository was introduced.
+Invitations persist organization, normalized email, inviter, SHA-256 token hash, expiration and pending/accepted/revoked state. Expired is derived, not persisted. The seven-day duration is centralized. A partial unique pending-email index has a stable state predicate; no `now()` index expression is used. Expired pending rows still occupy that key until reinvite/revocation.
 
-## Architecture and dependency rules
+Issuance uses 32 random bytes and stores only their SHA-256 hash. Reinvite transactionally revokes the previous pending invitation, rotates the ID/credential and selected roles. Revocation is repeatable and never removes accepted memberships. Acceptance requires a trusted authenticated verified matching email, not just possession. No User is auto-created.
 
-[ADR 0005](../decisions/0005-ddd-modular-monolith-architecture.md) approves a DDD-oriented modular monolith with a pragmatic Application layer and CQRS-lite:
+Acceptance/reinvite/revoke serialize on organization-first row locks. The existing membership unique constraint is authoritative. A real two-connection test observes lock contention and proves one acceptance plus one replay rejection. Rollback tests prove there is no partial membership, grant or accepted state. Invitation-role and membership-role pivots each have composite tenant FKs; raw corruption tests reject foreign IDs and forged pivot tenant values. Invitation/role deletion cascades invitation grants. Inviter user deletion is restricted while an invitation references it.
 
-- **Identity** owns user identity, credentials, authentication, recovery, verification, and current-user representation.
-- **Organization** owns tenant identity, ownership, memberships, roles, permission catalog/grants, and organization authorization. Membership and tenant RBAC stay together.
-- Modules have Domain, Application, Infrastructure, and Presentation layers only where actual code needs them. No empty future ERP modules or Shared Kernel are created.
-- Domain remains framework-independent. Lightweight Application paths may use same-module Eloquent and Laravel transactions; richer aggregates/repositories are introduced only when actual invariants justify them. This is not strict Clean Architecture everywhere.
-- Controllers invoke direct write use cases/queries. Reads may use efficient Eloquent/query-builder/SQL. No buses, event sourcing, separate read database, or new domain events.
-- Policies are Laravel adapters over the shared Organization access evaluator. Explicit tenant scope, constraints, binding, authorization ordering, and transaction semantics remain authoritative.
+SMTP mail is synchronous after commit and uses an Infrastructure Mailable. A non-SMTP invitation transport is rejected so credentials cannot enter the log mailer. Mailpit remains local delivery. Transport/view exceptions are sanitized without retaining their credential-bearing traces. HTTP 503 explains delivery failure and leaves the committed invitation; refreshing/reinviting rotates and retries. Reliable queued delivery/outbox behavior is outside Phase 1.4.
 
-Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. Phase 1.3.5 is complete locally, awaiting review. Phase 1.4 remains unimplemented.
+## HTTP and SPA
 
-## HTTP contract
+Existing health/readiness, `/me`, organization and RBAC contracts remain. All business routes use `/api/v1`, authenticated verified sessions and scoped organization binding. New endpoints are listed in [ADR 0006](../decisions/0006-organization-membership-lifecycle-and-invitations.md#boundaries-http-and-email): member/invitation lists, invitation create/revoke/accept, explicit member roles/suspend/activate/remove commands, and a small `users-access` capability representation. There is no generic membership PATCH. Invitation creation/acceptance are throttled.
 
-| Route | Success | Failure | Purpose |
-| --- | --- | --- | --- |
-| `GET /api/v1/health` | 200, `{"data":{"status":"ok"}}` | Framework errors | Public liveness |
-| `GET /api/v1/ready` | 200, `{"data":{"status":"ok"}}` | 503 | PostgreSQL and Redis readiness |
-| `GET /api/v1/me` | 200, limited user resource | 401 | Current session user and verification status |
-| `GET /api/v1/organizations` | 200, membership-scoped list | 401/403 | List verified user's organizations |
-| `POST /api/v1/organizations` | 201, limited resource | 401/403/422 | Create organization and owner membership |
-| `GET /api/v1/organizations/{organization}` | 200, limited resource | 401/403/404 | View a member organization |
-| `PATCH /api/v1/organizations/{organization}` | 200, limited resource | 401/403/404/422 | Owner or member with `organizations.update` updates the name |
-| `GET /api/v1/organizations/{organization}/roles` | 200, roles and `meta.can_manage` | 401/403/404 | Owner or `roles.view` reads tenant roles |
-| `GET /api/v1/organizations/{organization}/permissions` | 200, key/label catalog | 401/403/404 | Owner or `roles.view` reads application capabilities |
-| `POST /api/v1/organizations/{organization}/roles` | 201, role resource | 401/403/404/422 | Owner creates a role with permissions |
-| `PATCH /api/v1/organizations/{organization}/roles/{role}` | 200, role resource | 401/403/404/422 | Owner replaces role name and permission set |
+Member Resources allowlist membership ID, user ID/name/email, status, roles and is_owner. Invitation Resources expose ID/email/state/expiration/roles only. Tokens/hashes, password/session/verification internals and pivots are absent. Expected invitation errors render safe reason/message pairs and are not logged; token input is never flashed.
 
-Role writes require both `name` and `permissions` (an empty array clears grants). The role resource exposes only ID, name and sorted permission keys. Scoped binding and Policies protect every role route. Role-name uniqueness ignores case and ordinary surrounding spaces within one organization.
+The SPA keeps public auth/organization state in Pinia; users/roles/invitations remain view-local. The organization comes from the route, with stale tenant responses discarded. `/app/organizations/:organizationId/users` provides members and invitations, owner-only lifecycle/role controls, and roleless delegated invitation controls. The existing workspace and Roles & Permissions UI remain.
 
-Operational endpoints reveal no user or tenant data. Readiness checks connectivity, not migration currency. API exception responses are JSON.
+`/invitations/:invitationId/accept#token=...` captures the token in memory and replaces the URL without the fragment. No localStorage, sessionStorage or persisted Pinia is used. Guests reuse login/register, unverified users reuse verification, and verified users explicitly accept. Pending in-memory navigation returns to acceptance. Open verification in another tab and return to “I've verified”; after full reload/same-tab verification, reopen the original invitation email. Wrong email allows account switching; expired/revoked/accepted/invalid invitations show terminal errors; success enters the workspace. Server authorization remains authoritative.
 
-## Tenant boundary
+Sanctum, Fortify, CSRF, Redis sessions, password reset and verification behavior are preserved. Vite provides the existing same-origin development proxy. PostgreSQL and Redis readiness checks remain read-only and disclose no tenant data.
 
-Phase 1.2 uses shared-database, shared-schema tenancy. An organization has a public ULID, a name, and an explicit owner user. A first-class membership joins users and organizations. The owner must be a member, enforced by a deferred PostgreSQL foreign key and transactional creation. Memberships have no lifecycle status; they may hold multiple organization-scoped roles. Future tenant-owned tables will reference `organizations.id`; every data path must apply server-side organization scoping and authorization.
+## Verification and operational limits
 
-The SPA selects context through `/app/organizations/{organizationId}` and reloads it from the API on refresh. There is no active organization stored on the user or in browser storage. The backend treats the route identifier as untrusted: the list uses a membership query, while show and update use `OrganizationPolicy`. A non-member gets 404 for an unrelated organization; a member lacking `organizations.update` gets 403 when updating. Organization APIs require server-side email verification. ERP data tables do not exist yet.
+Pest covers Unit, Application, Architecture, Auth, organizations, RBAC, new lifecycle/identity/tenant failures, PostgreSQL constraints and real concurrency. Architecture checks discover new Domain/Application/controller classes and continue forbidding framework dependencies in Domain, Presentation/HTTP/Gate/ambient auth in Application, controller mutations/transactions, and Identity → Organization dependencies. Static checks supplement runtime security tests.
 
-## Organization authorization
+Vitest covers member/invitation workflows, owner/delegation controls, failure rendering, acceptance states and memory return navigation. Playwright includes the full real-Mailpit multi-user registration/verification/invitation/role/suspend/reactivate/remove flow, alongside prior suites. Backend database suites run sequentially and separately from browser writes. The concurrency integration test commits and cleans its own identified fixtures; other feature tests retain outer transactions and migration tests flush deferred constraints before schema changes.
 
-Phase 1.3 relates organization memberships to organization roles through a pivot with two composite foreign keys. PostgreSQL requires the membership and role to belong to the same organization, independently of HTTP validation. Roles relate to application-defined permission records through a unique relational pivot. `PermissionKey` defines `organizations.update` and `roles.view`; the versioned migration inserts those keys and a database check rejects arbitrary keys.
-
-`OrganizationAccess` now owns the actor rules previously distributed across OrganizationPolicy and OrganizationMembership::hasPermission (the model method was removed). Workspace viewing requires membership. Updating requires explicit ownership or `organizations.update`; role/catalog reading requires ownership or `roles.view`; role creation/editing remains owner-only. Ownership comes from persisted `organizations.owner_user_id`, never a role name or supplied owner flag.
-
-Each decision queries persisted membership and ownership together. A non-owner permission decision uses a second tenant-scoped EXISTS query across assigned roles and permissions. No loaded relationship collection or permission cache participates; revocation is visible on the next check. Role unions remain intact. Membership is required even for owners, consistent with the deferred database invariant. One decision needs one or two queries independent of the number of roles; ListOrganizations remains its existing membership-scoped query without per-row evaluation.
-
-Identity authentication/verification remain HTTP middleware responsibilities; Application callers supply trusted actor identity and validated inputs. Authorization checks are fresh at invocation, not a new concurrency guarantee: transaction isolation and role-write locking are unchanged, and concurrent revocation after a decision is not serialized by this checkpoint.
-
-The Roles & Permissions SPA route is `/app/organizations/{organizationId}/roles`. It lists roles and allows owners to create/edit names and permission sets. Readers with `roles.view` receive a read-only catalog. The API's `can_manage` flag is a presentation hint only. This view keeps API results locally and discards stale responses after tenant navigation. Membership-role assignment is internal and tested, with no public assignment or member-management API until Phase 1.4.
-
-## Verification boundaries
-
-Pest tests cover authentication, transaction rollback, PostgreSQL constraints, owner authorization, cross-tenant isolation, permission unions, revocation, RBAC constraints, and migration compatibility. Vitest covers client state and routing. Playwright exercises authentication, email verification, onboarding, refresh, a second user's access denial, and role creation/editing with persistence after refresh. Pint, Larastan, ESLint, Prettier, TypeScript checking, audits, and production build are local quality gates.
-
-The Architecture suite runs with backend quality without booting Laravel. Current controller/dependency/global-state checks are active; Organization Domain/Application checks now run with no skips; model/ambient-context guards include both modules. Identity cannot depend on Organization; Organization can reference only the User persistence type through five explicitly listed existing adapters. They complement, rather than prove, authorization and tenant isolation. Characterization covers application-owned errors, denial-before-validation ordering, resource status/shape, scoped binding, policy/factory/Fortify resolution, and unverified `/me`. See [Phase 1.3.5 validation](../phases/phase-01-ddd-architecture-validation.md) for observed results and limitations.
-
-## Deferred compatibility concerns
-
-Current 404 status hiding does not make error bodies indistinguishable. With debug disabled, a policy-hidden organization returns `{"message":"Not Found"}`; missing-model and foreign-role binding failures contain Laravel's model class/identifier message. Tests preserve status and the message-only envelope without making framework class names a public contract. C naturally changes the incidental model class text to `App\Modules\Organization\Infrastructure\Eloquent\Models\Organization` or `Role`; policy-hidden responses remain `Not Found`. No normalization is performed; any future normalization needs a separate security/API decision.
-
-`config/cors.php` currently allows GET, POST, and OPTIONS, but not PATCH. A true cross-origin PATCH preflight consequently lacks PATCH in `Access-Control-Allow-Methods`. The supported local SPA uses Vite's same-origin proxy; a cross-origin deployment needs separate CORS review. Configuration remains unchanged.
-
-Feature tests use the configured PostgreSQL database with outer transactions; there is no dedicated database name in phpunit.xml. One existing migration test drops/reapplies RBAC tables within that transaction, and deferred-constraint tests use explicit checks/savepoints. Keep tests sequential and separate backend tests from browser writes. This checkpoint does not alter the database-testing strategy.
-
-See [ADR 0001](../decisions/0001-foundation.md), [ADR 0002](../decisions/0002-spa-authentication.md), [ADR 0003](../decisions/0003-multi-tenancy-and-organizations.md), [ADR 0004](../decisions/0004-organization-scoped-rbac.md), and the [Phase 1 roadmap](../phases/phase-01-core-platform.md).
+Lists remain unpaginated. The coarse tenant row lock favors correctness at current administrative scale. Previously known limitations remain: true cross-origin deployments need CORS method review (GET/POST/OPTIONS currently configured), and framework missing-model messages can differ from policy-hidden 404 messages. Production TLS, SMTP provider, reverse proxy and deployment hardening remain separate work. No Phase 1.5 or later functionality is implemented.

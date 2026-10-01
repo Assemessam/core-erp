@@ -3,6 +3,7 @@
 namespace App\Modules\Organization\Application\Authorization;
 
 use App\Modules\Organization\Domain\Authorization\PermissionKey;
+use App\Modules\Organization\Domain\Memberships\MembershipStatus;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\OrganizationMembership;
 
@@ -37,6 +38,28 @@ final class OrganizationAccess
             : AccessDecision::forbidden('Only the organization owner may manage roles.');
     }
 
+    public function viewMembers(int $actorUserId, string $organizationId): AccessDecision
+    {
+        return $this->permission($actorUserId, $organizationId, PermissionKey::MembersView);
+    }
+
+    public function inviteMembers(int $actorUserId, string $organizationId): AccessDecision
+    {
+        return $this->permission($actorUserId, $organizationId, PermissionKey::MembersInvite);
+    }
+
+    public function manageMembers(int $actorUserId, string $organizationId): AccessDecision
+    {
+        $organization = $this->memberOrganization($actorUserId, $organizationId);
+        if ($organization === null) {
+            return AccessDecision::hidden();
+        }
+
+        return $organization->owner_user_id === $actorUserId
+            ? AccessDecision::allowed()
+            : AccessDecision::forbidden('Only the organization owner may manage memberships or invitation roles.');
+    }
+
     private function permission(int $actorUserId, string $organizationId, PermissionKey $permission): AccessDecision
     {
         $organization = $this->memberOrganization($actorUserId, $organizationId);
@@ -48,7 +71,7 @@ final class OrganizationAccess
         }
 
         $hasPermission = OrganizationMembership::query()
-            ->where('organization_id', $organizationId)->where('user_id', $actorUserId)
+            ->where('organization_id', $organizationId)->where('user_id', $actorUserId)->where('status', MembershipStatus::Active)
             ->whereHas('roles', fn ($query) => $query->where('roles.organization_id', $organizationId)
                 ->whereHas('permissions', fn ($query) => $query->where('permissions.key', $permission->value)))
             ->exists();
@@ -63,7 +86,7 @@ final class OrganizationAccess
         // Read persisted membership and ownership together; never reuse loaded relationships.
         // Membership remains required even for owners (also enforced by the deferred FK).
         return Organization::query()->whereKey($organizationId)
-            ->whereHas('memberships', fn ($query) => $query->where('user_id', $actorUserId))
+            ->whereHas('memberships', fn ($query) => $query->where('user_id', $actorUserId)->where('status', MembershipStatus::Active))
             ->first(['id', 'owner_user_id']);
     }
 }

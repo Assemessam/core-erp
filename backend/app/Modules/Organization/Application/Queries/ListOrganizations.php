@@ -2,6 +2,7 @@
 
 namespace App\Modules\Organization\Application\Queries;
 
+use App\Modules\Organization\Domain\Memberships\MembershipStatus;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use Illuminate\Database\Eloquent\Collection;
 
@@ -10,7 +11,7 @@ class ListOrganizations
     /** @return Collection<int, Organization> */
     public function handle(int $userId): Collection
     {
-        return Organization::query()->whereHas('memberships', fn ($query) => $query->where('user_id', $userId))
+        return Organization::query()->whereHas('memberships', fn ($query) => $query->where('user_id', $userId)->where('status', MembershipStatus::Active))
             ->orderBy('name')->get();
     }
 }

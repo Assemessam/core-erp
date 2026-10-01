@@ -1,4 +1,7 @@
 import { createRouter, createWebHistory, type RouterHistory } from 'vue-router'
+import { pendingInvitation } from '../lib/pendingInvitation'
+import OrganizationUsersView from '../views/OrganizationUsersView.vue'
+import AcceptInvitationView from '../views/AcceptInvitationView.vue'
 import { useAuthStore } from '../stores/auth'
 import FoundationView from '../views/FoundationView.vue'
 import NotFoundView from '../views/NotFoundView.vue'
@@ -12,6 +15,17 @@ import OrganizationWorkspaceView from '../views/OrganizationWorkspaceView.vue'
 import OrganizationRolesView from '../views/OrganizationRolesView.vue'
 
 export const routes = [
+  {
+    path: '/invitations/:invitationId/accept',
+    name: 'accept-invitation',
+    component: AcceptInvitationView,
+  },
+  {
+    path: '/app/organizations/:organizationId/users',
+    name: 'organization-users',
+    component: OrganizationUsersView,
+    meta: { requiresAuth: true, requiresVerified: true },
+  },
   { path: '/', name: 'foundation', component: FoundationView },
   {
     path: '/login',
@@ -90,6 +104,14 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
         ? { name: 'login', query: { redirect: to.fullPath } }
         : true
     }
+    if (
+      auth.user.email_verified &&
+      pendingInvitation.path() &&
+      ['app', 'organizations', 'verify-email', 'login', 'register'].includes(
+        String(to.name),
+      )
+    )
+      return pendingInvitation.path()!
     if (to.meta.guestOnly)
       return { name: auth.user.email_verified ? 'app' : 'verify-email' }
     if (to.meta.requiresVerified && !auth.user.email_verified)

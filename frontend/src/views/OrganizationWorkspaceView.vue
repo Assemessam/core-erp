@@ -48,6 +48,14 @@ watch(
         class="mt-6 inline-block text-teal-300"
         >Roles &amp; Permissions</RouterLink
       >
+      <RouterLink
+        :to="{
+          name: 'organization-users',
+          params: { organizationId: organizations.current.id },
+        }"
+        class="ml-6 text-teal-300"
+        >Users</RouterLink
+      >
       <p class="mt-2 text-slate-400">
         This workspace confirms your organization context. ERP modules arrive in
         later milestones.

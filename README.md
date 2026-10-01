@@ -2,7 +2,7 @@
 
 CoreERP is a portfolio-grade ERP under active development, built to demonstrate disciplined software engineering: clear boundaries, automated verification, security, and maintainable architecture.
 
-**Phase 1.3.5 — DDD Modular Monolith Refactor is complete locally, awaiting review.** The Laravel backend has two current business modules: Identity (Infrastructure and Presentation) and Organization (Domain, Application, Infrastructure and Presentation). Organization owns membership and tenant RBAC; its persisted authorization evaluator is shared by Policies and authorized write use cases. User remains Eloquent, Fortify remains framework integration, and lightweight Organization Application paths use Eloquent directly. No aggregate repositories, application buses or Shared Kernel are needed yet. The HTTP API, frontend, database and tenant/security semantics are preserved. [ADR 0005](docs/decisions/0005-ddd-modular-monolith-architecture.md) records the design. Phase 1.4 invitations and membership management remain unimplemented.
+**Phase 1.4 — Organization Users, Membership Lifecycle & Invitations is implemented locally, awaiting review.** Identity still owns authentication; Organization owns tenant membership and RBAC under [ADR 0005](docs/decisions/0005-ddd-modular-monolith-architecture.md). Owners can invite users with roles, synchronize member roles, suspend/reactivate and remove members. Verified matching email is required to accept a hashed, expiring invitation. [ADR 0006](docs/decisions/0006-organization-membership-lifecycle-and-invitations.md) records lifecycle, delegation and concurrency decisions. Phase 1.5 Audit Trail remains unimplemented.
 
 ## Architecture
 
@@ -70,14 +70,14 @@ docker compose run --rm backend php artisan migrate --no-interaction
 docker compose up -d --wait
 ```
 
-The schema includes users, password-reset/session scaffolding, organizations, memberships, organization roles, and relational permission grants. There are no seeded users. Redis stores sessions, so the standard `sessions` table is unused. No Sanctum personal-access-token migration or token issuance is added.
+The schema includes users, password-reset/session scaffolding, organizations, memberships, organization roles, relational permission grants, membership status, invitations and invitation-role grants. There are no seeded users. Redis stores sessions, so the standard `sessions` table is unused. No Sanctum personal-access-token migration or token issuance is added.
 
 - Frontend: <http://localhost:5174>
 - API liveness: <http://localhost:8088/api/v1/health>
 - API readiness: <http://localhost:8088/api/v1/ready>
 - Mailpit inbox: <http://localhost:8026>
 
-To try the application, open the frontend, create an account, then open Mailpit to follow its signed verification link. The link briefly opens the Laravel origin at port 8088 and returns to the SPA's organization onboarding screen. Create an organization, then enter its workspace at `/app/organizations/{organizationId}`. Open **Roles & Permissions** in the workspace to create or edit roles and their permissions. The explicit owner manages roles without needing an Owner role; assigning roles to members through the UI is deferred to Phase 1.4. Password-reset messages also appear in Mailpit. Mailpit SMTP stays inside Docker on port 1025; its web UI binds only to loopback. Its inbox is ephemeral local development data.
+To try the application, open the frontend, create an account, then open Mailpit to follow its signed verification link. The link briefly opens the Laravel origin at port 8088 and returns to the SPA's organization onboarding screen. Create an organization, then enter its workspace at `/app/organizations/{organizationId}`. Open **Roles & Permissions** in the workspace to create or edit roles and their permissions. The explicit owner manages roles without needing an Owner role. Open **Users** to invite an email with optional roles, manage existing member roles, suspend/reactivate members, or remove membership. Owner membership cannot be suspended or removed. Delegated `members.view` allows member listing; `members.invite` allows invitations without roles. Password-reset messages also appear in Mailpit. Mailpit SMTP stays inside Docker on port 1025; its web UI binds only to loopback. Its inbox is ephemeral local development data.
 
 Subsequent starts use `docker compose up -d --wait` (add `--build` after Dockerfile changes). After lockfile changes, rerun the dependency installation commands. Bind mounts provide source hot reload; dependencies live in ignored `backend/vendor` and `frontend/node_modules` directories.
 
@@ -150,6 +150,14 @@ The password-reset request responds the same way for registered and unregistered
 
 Development uses the same `localhost` host on both ports so cookies work through the proxy. Do not switch only one origin to `127.0.0.1`. For production subdomains, set `VITE_API_ORIGIN` at frontend build time, `APP_URL` and `FRONTEND_URL` to their HTTPS origins, narrow `CORS_ALLOWED_ORIGINS`, include the SPA host in `SANCTUM_STATEFUL_DOMAINS`, set `SESSION_DOMAIN` to the shared parent domain, and enable `SESSION_SECURE_COOKIE`. See [ADR 0002](docs/decisions/0002-spa-authentication.md) for the exact model. These settings are deployment preparation, not a production release configuration.
 
+## Invitation flow
+
+Invitation emails arrive in Mailpit and expire after seven days. A new invitation to the same organization/email revokes the previous pending link. Existing active or suspended memberships cannot be invited again; reactivate a suspended member instead.
+
+The invitee opens the email link, signs in or registers with the invited address, verifies their email, then explicitly accepts. The token is captured only in SPA memory and removed from the URL fragment. Open the verification link in another tab and return to **I've verified**; after a reload or same-tab verification, reopen the invitation email. No invitation token is stored in browser storage or returned by list APIs.
+
+Suspension immediately hides the organization on subsequent access checks while retaining roles. Reactivation restores them; removal deletes only membership and its grants. Invitation mail is synchronous after commit, using SMTP only. On delivery failure, refresh the invitation list and reinvite to rotate the credential and retry.
+
 ## Current status and next milestone
 
-Phase 1.0 provides the platform foundation. Phase 1.1 adds first-party authentication. Phase 1.2 adds organization ownership, membership, isolation policies, and route-based onboarding. Phase 1.3 adds membership-scoped RBAC, permission-based organization updates, and owner-managed roles. Phase 1.3.5 establishes the Identity and Organization modules, Application operations and enforceable boundaries. The refactor is complete locally, awaiting review; **1.4 User invitations / organization users** remains planned and unimplemented. See the [roadmap](docs/phases/phase-01-core-platform.md), [Phase 1.3 validation](docs/phases/phase-01-rbac-validation.md), and [Phase 1.3.5 validation](docs/phases/phase-01-ddd-architecture-validation.md).
+Phase 1.0–1.3.5 establish the foundation, authentication, organizations, RBAC and modular architecture. Phase 1.4 adds organization users, membership lifecycle and invitations. See the [roadmap](docs/phases/phase-01-core-platform.md), [Phase 1.4 validation](docs/phases/phase-01-organization-users-validation.md), and [ADR 0006](docs/decisions/0006-organization-membership-lifecycle-and-invitations.md). Review this complete diff before committing. **Phase 1.5 Audit Trail remains planned and unimplemented.**

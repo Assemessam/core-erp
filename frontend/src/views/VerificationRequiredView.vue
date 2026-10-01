@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { pendingInvitation } from '../lib/pendingInvitation'
 import { authApi } from '../lib/auth'
 import { useAuthStore } from '../stores/auth'
 import { formFeedback } from '../lib/httpError'
@@ -30,7 +31,8 @@ async function check() {
   errorMessage.value = ''
   try {
     await auth.refresh()
-    if (auth.user?.email_verified) await router.replace('/app')
+    if (auth.user?.email_verified)
+      await router.replace(pendingInvitation.path() ?? '/app')
     else status.value = 'Your email is not verified yet.'
   } catch (error) {
     errorMessage.value = formFeedback(error).message

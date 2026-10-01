@@ -7,6 +7,8 @@ use App\Modules\Organization\Infrastructure\Authorization\OrganizationPolicy;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\OrganizationMembership;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationController;
+use App\Modules\Organization\Presentation\Http\Controllers\OrganizationInvitationController;
+use App\Modules\Organization\Presentation\Http\Controllers\OrganizationMemberController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationRoleController;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\DatabaseManager;
@@ -32,6 +34,8 @@ arch('only existing organization relationships and actor adapters consume the Id
     ->ignoring([
         Organization::class, OrganizationMembership::class, OrganizationPolicy::class,
         OrganizationController::class, OrganizationRoleController::class,
+        OrganizationMemberController::class,
+        OrganizationInvitationController::class,
     ]);
 
 arch('Organization Application does not depend on Identity')

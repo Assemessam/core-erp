@@ -11,6 +11,21 @@ class OrganizationPolicy
 {
     public function __construct(private readonly OrganizationAccess $access) {}
 
+    public function viewMembers(User $user, Organization $organization): Response
+    {
+        return AccessResponse::fromDecision($this->access->viewMembers($user->id, $organization->id));
+    }
+
+    public function inviteMembers(User $user, Organization $organization): Response
+    {
+        return AccessResponse::fromDecision($this->access->inviteMembers($user->id, $organization->id));
+    }
+
+    public function manageMembers(User $user, Organization $organization): Response
+    {
+        return AccessResponse::fromDecision($this->access->manageMembers($user->id, $organization->id));
+    }
+
     public function view(User $user, Organization $organization): Response
     {
         return AccessResponse::fromDecision($this->access->view($user->id, $organization->id));

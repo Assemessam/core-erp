@@ -1,0 +1,157 @@
+import { test, expect, type Page } from '@playwright/test'
+
+const password = 'Correct Horse 123'
+async function mail(page: Page, email: string, subject: string) {
+  let messageId: string | undefined
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(
+        'http://127.0.0.1:8026/api/v1/messages',
+      )
+      const data = (await response.json()) as {
+        messages: { ID: string; Subject: string; To: { Address: string }[] }[]
+      }
+      messageId = data.messages.find(
+        (message) =>
+          message.Subject === subject &&
+          message.To.some((recipient) => recipient.Address === email),
+      )?.ID
+      return messageId
+    })
+    .toBeTruthy()
+  return (await (
+    await page.request.get(`http://127.0.0.1:8026/api/v1/message/${messageId}`)
+  ).json()) as { Text: string; HTML: string }
+}
+async function register(page: Page, email: string, name: string) {
+  await page.getByLabel('Name', { exact: true }).fill(name)
+  await page.getByLabel('Email', { exact: true }).fill(email)
+  await page.getByLabel('Password', { exact: true }).fill(password)
+  await page.getByLabel('Confirm password').fill(password)
+  await page.getByRole('button', { name: 'Create account' }).click()
+  await expect(page).toHaveURL(/\/verify-email$/)
+}
+async function verify(page: Page, email: string) {
+  const message = await mail(page, email, 'Verify your email address')
+  const url = message.Text.split('\n')
+    .find((line) => line.startsWith('Verify Email Address: '))!
+    .replace('Verify Email Address: ', '')
+    .trim()
+  // Preserve the invitation's memory in the original tab through verification.
+  const verification = await page.context().newPage()
+  await verification.goto(url)
+  await expect(verification).toHaveURL(/verified=1/)
+  await verification.close()
+  await page.getByRole('button', { name: "I've verified" }).click()
+}
+
+test('invited user registers verifies accepts and follows membership lifecycle', async ({
+  page,
+  browser,
+}) => {
+  const unique = Date.now()
+  const ownerEmail = `users-owner-${unique}@example.test`
+  const memberEmail = `users-member-${unique}@example.test`
+  await page.goto('/register')
+  await register(page, ownerEmail, 'Users Owner')
+  await verify(page, ownerEmail)
+  await expect(page).toHaveURL(/\/app\/organizations$/)
+  await page.getByLabel('Organization name').fill('Lifecycle Workspace')
+  await page.getByRole('button', { name: 'Create organization' }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Lifecycle Workspace' }),
+  ).toBeVisible()
+  const workspace = page.url()
+  await page.getByRole('link', { name: 'Roles & Permissions' }).click()
+  await page.getByLabel('Role name').fill('Member Reader')
+  await page.getByLabel('View organization members').check()
+  await page.getByRole('button', { name: 'Save role' }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Member Reader' }),
+  ).toBeVisible()
+  await page.goto(`${workspace}/users`)
+  await page.getByLabel('Invite email').fill(memberEmail)
+  await page
+    .getByRole('group', { name: 'Invitation roles' })
+    .getByLabel('Member Reader')
+    .check()
+  await page.getByRole('button', { name: 'Send invitation' }).click()
+  await expect(
+    page.getByText('Invitation sent.', { exact: true }),
+  ).toBeVisible()
+  const invitation = await mail(page, memberEmail, 'Organization invitation')
+  const invitationUrl = invitation.HTML.match(
+    /href="([^"]+\/invitations\/[^"]+)"/,
+  )?.[1]?.replaceAll('&amp;', '&')
+  expect(invitationUrl).toBeTruthy()
+  const context = await browser.newContext()
+  try {
+    const memberPage = await context.newPage()
+    await memberPage.goto(invitationUrl!)
+    await expect(
+      memberPage.getByRole('heading', { name: 'Accept invitation' }),
+    ).toBeVisible()
+    await expect(memberPage).not.toHaveURL(/token=/)
+    await memberPage.getByRole('link', { name: 'Create account' }).click()
+    await register(memberPage, memberEmail, 'Invited Member')
+    await verify(memberPage, memberEmail)
+    await expect(memberPage).toHaveURL(/\/invitations\/[^/]+\/accept$/)
+    await memberPage
+      .getByRole('button', { name: 'Accept invitation', exact: true })
+      .click()
+    await expect(memberPage).toHaveURL(workspace)
+    await memberPage.reload()
+    await expect(
+      memberPage.getByRole('heading', { name: 'Lifecycle Workspace' }),
+    ).toBeVisible()
+    await memberPage.getByRole('link', { name: 'Users', exact: true }).click()
+    await expect(
+      memberPage
+        .getByRole('list', { name: 'Organization members' })
+        .getByText(memberEmail),
+    ).toBeVisible()
+    await expect(
+      memberPage.getByRole('button', { name: 'Suspend' }),
+    ).toHaveCount(0)
+    await page.reload()
+    const row = page
+      .getByRole('list', { name: 'Organization members' })
+      .getByRole('listitem')
+      .filter({ hasText: memberEmail })
+    await row.getByRole('button', { name: 'Suspend', exact: true }).click()
+    await expect(
+      page.getByText('Member suspended.', { exact: true }),
+    ).toBeVisible()
+    await memberPage.goto(workspace)
+    await expect(
+      memberPage.getByRole('heading', { name: 'Organization unavailable' }),
+    ).toBeVisible()
+    await row.getByRole('button', { name: 'Reactivate' }).click()
+    await expect(
+      page.getByText('Member reactivated.', { exact: true }),
+    ).toBeVisible()
+    await memberPage.goto(`${workspace}/users`)
+    await expect(
+      memberPage
+        .getByRole('list', { name: 'Organization members' })
+        .getByText(memberEmail),
+    ).toBeVisible()
+    page.once('dialog', (dialog) => dialog.accept())
+    await row.getByRole('button', { name: 'Remove', exact: true }).click()
+    await expect(
+      page.getByText('Member removed.', { exact: true }),
+    ).toBeVisible()
+    await memberPage.goto(workspace)
+    await expect(
+      memberPage.getByRole('heading', { name: 'Organization unavailable' }),
+    ).toBeVisible()
+    await memberPage.goto('/app/organizations')
+    await expect(
+      memberPage.getByRole('heading', {
+        name: 'Create your first organization',
+      }),
+    ).toBeVisible()
+  } finally {
+    await context.close()
+  }
+})
