@@ -5,13 +5,15 @@ use App\Modules\Organization\Application\Authorization\AccessDecision;
 use App\Modules\Organization\Application\Authorization\OrganizationAccess;
 use App\Modules\Organization\Application\Commands\CreateOrganization;
 use App\Modules\Organization\Application\Commands\SaveRole;
+use App\Modules\Organization\Application\Exceptions\RoleNameConflict;
 use App\Modules\Organization\Application\Operations\AssignMembershipRole;
 use App\Modules\Organization\Domain\Authorization\PermissionKey;
+use App\Modules\Organization\Domain\Memberships\CrossOrganizationRoleAssignment;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Permission;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 
 function rbacOrganization(?User $owner = null): Organization
 {
@@ -122,8 +124,8 @@ it('unions multiple membership roles without granting authority in another organ
     $user = User::factory()->create();
     $membership = $organization->memberships()->create(['user_id' => $user->id]);
     $other->memberships()->create(['user_id' => $user->id]);
-    $editor = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Editor', ['organizations.update']);
-    $reader = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Reader', ['roles.view']);
+    $editor = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Editor', PermissionKey::OrganizationsUpdate);
+    $reader = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Reader', PermissionKey::RolesView);
     expect(app(OrganizationAccess::class)->update($user->id, $organization->id)->outcome)->toBe(AccessDecision::FORBIDDEN);
     app(AssignMembershipRole::class)->handle($membership, $editor);
     expect(app(OrganizationAccess::class)->update($user->id, $organization->id)->outcome)->toBe(AccessDecision::ALLOWED);
@@ -154,7 +156,7 @@ it('rejects cross-organization role assignment in the domain and database', func
     $other = rbacOrganization();
     $membership = $organization->memberships()->sole();
     $foreign = $other->roles()->create(['name' => 'Foreign']);
-    expect(fn () => app(AssignMembershipRole::class)->handle($membership, $foreign))->toThrow(ValidationException::class);
+    expect(fn () => app(AssignMembershipRole::class)->handle($membership, $foreign))->toThrow(CrossOrganizationRoleAssignment::class);
     foreach ([$organization->id, $other->id] as $tenant) {
         expect(fn () => DB::transaction(fn () => DB::table('organization_membership_role')->insert([
             'organization_id' => $tenant, 'organization_membership_id' => $membership->id, 'role_id' => $foreign->id,
@@ -166,7 +168,7 @@ it('rejects cross-organization role assignment in the domain and database', func
 it('enforces RBAC uniqueness references and application-defined keys in PostgreSQL', function () {
     $organization = rbacOrganization();
     $membership = $organization->memberships()->sole();
-    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Editors', ['organizations.update']);
+    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Editors', PermissionKey::OrganizationsUpdate);
     app(AssignMembershipRole::class)->handle($membership, $role);
     $missing = '01AAAAAAAAAAAAAAAAAAAAAAAA';
     foreach ([
@@ -194,7 +196,7 @@ it('enforces RBAC uniqueness references and application-defined keys in PostgreS
 
 it('cascades dependent links intentionally without deleting permissions or unrelated roles', function () {
     $organization = rbacOrganization();
-    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Disposable', ['roles.view']);
+    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Disposable', PermissionKey::RolesView);
     $member = $organization->memberships()->create(['user_id' => User::factory()->create()->id]);
     app(AssignMembershipRole::class)->handle($member, $role);
     $member->delete();
@@ -203,7 +205,7 @@ it('cascades dependent links intentionally without deleting permissions or unrel
     $role->delete();
     expect(DB::table('organization_membership_role')->where('role_id', $role->id)->count())->toBe(0);
     expect(DB::table('role_permission')->where('role_id', $role->id)->count())->toBe(0);
-    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Cascade', ['roles.view']);
+    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Cascade', PermissionKey::RolesView);
     app(AssignMembershipRole::class)->handle($organization->memberships()->sole(), $role);
     $organization->delete();
     DB::statement('SET CONSTRAINTS organizations_owner_membership_foreign IMMEDIATE');
@@ -232,11 +234,22 @@ it('preserves pre-RBAC ownership across migration rollback and reapply without o
 
 it('rolls back the entire role mutation on a permission write failure and handles duplicate races', function () {
     $organization = rbacOrganization();
-    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Stable', ['roles.view']);
-    expect(fn () => app(SaveRole::class)->handle($organization->owner_user_id, $organization, $role, 'Changed', ['unknown']))->toThrow(QueryException::class);
+    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Stable', PermissionKey::RolesView);
+    // Typed permissions reject unknown keys before entering the transaction. Inject a failure
+    // after a real pivot insert instead, to prove name and grant changes roll back together.
+    $failed = false;
+    DB::listen(function (QueryExecuted $query) use ($role, &$failed): void {
+        if (str_starts_with($query->sql, 'insert into "role_permission"') && in_array($role->id, $query->bindings, true)) {
+            $failed = true;
+            throw new RuntimeException('Simulated permission persistence failure');
+        }
+    });
+    expect(fn () => app(SaveRole::class)->handle($organization->owner_user_id, $organization, $role, 'Changed', PermissionKey::OrganizationsUpdate))
+        ->toThrow(RuntimeException::class, 'Simulated permission persistence failure');
+    expect($failed)->toBeTrue();
     expect($role->fresh()->name)->toBe('Stable');
     expect($role->permissions()->pluck('key')->all())->toBe(['roles.view']);
-    expect(fn () => app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'stable', []))->toThrow(ValidationException::class);
+    expect(fn () => app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'stable'))->toThrow(RoleNameConflict::class);
     expect($organization->roles()->count())->toBe(1);
 });
 

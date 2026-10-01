@@ -4,18 +4,18 @@ namespace App\Modules\Organization\Application\Commands;
 
 use App\Modules\Organization\Application\Authorization\AccessDecision;
 use App\Modules\Organization\Application\Authorization\OrganizationAccess;
+use App\Modules\Organization\Application\Exceptions\RoleNameConflict;
+use App\Modules\Organization\Domain\Authorization\PermissionKey;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Role;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 
 class SaveRole
 {
     public function __construct(private readonly OrganizationAccess $access) {}
 
-    /** @param list<string> $permissions */
-    public function handle(int $actorUserId, Organization $organization, ?Role $role, string $name, array $permissions): Role
+    public function handle(int $actorUserId, Organization $organization, ?Role $role, string $name, PermissionKey ...$permissions): Role
     {
         // Resource scope is independent of actor authority, just as scoped HTTP binding is.
         if ($role !== null && $role->organization_id !== $organization->getKey()) {
@@ -32,13 +32,13 @@ class SaveRole
                     $role = $organization->roles()->whereKey($role->getKey())->lockForUpdate()->firstOrFail();
                     $role->update(['name' => trim($name)]);
                 }
-                $role->permissions()->sync($permissions);
+                $role->permissions()->sync(array_map(fn (PermissionKey $permission): string => $permission->value, $permissions));
 
                 return $role->load('permissions');
             });
         } catch (QueryException $exception) {
             if ($exception->getCode() === '23505' && str_contains($exception->getMessage(), 'roles_organization_name_unique')) {
-                throw ValidationException::withMessages(['name' => 'A role with this name already exists in this organization.']);
+                throw new RoleNameConflict($exception);
             }
             throw $exception;
         }

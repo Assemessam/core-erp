@@ -2,8 +2,6 @@
 
 use App\Modules\Organization\Application\Commands\CreateOrganization;
 use App\Modules\Organization\Application\Commands\RenameOrganization;
-use App\Modules\Organization\Application\Commands\SaveRole;
-use App\Modules\Organization\Application\Operations\AssignMembershipRole;
 use App\Modules\Organization\Application\Queries\ListOrganizations;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\DatabaseManager;
@@ -87,9 +85,7 @@ it('keeps Application independent of HTTP delivery when introduced', function ()
         'App\\Modules\\Organization\\Infrastructure\\Authorization',
         'auth', 'request', 'response', 'session', 'abort', 'abort_if', 'abort_unless',
     ]);
-    // Existing RBAC validation errors remain until a separately reviewed extraction.
-    expect($applicationNamespaces)->not->toUse('Illuminate\\Validation\\ValidationException')
-        ->ignoring([SaveRole::class, AssignMembershipRole::class]);
+    expect($applicationNamespaces)->not->toUse('Illuminate\\Validation\\ValidationException');
     // CreateOrganization reads only the explicit owner's key; no Identity mutation is authorized.
     expect($applicationNamespaces)->not->toUse('App\\Models\\User')->ignoring(CreateOrganization::class);
 })->skip($applicationNamespaces === [], 'No module Application layer exists yet; activates automatically when introduced.');

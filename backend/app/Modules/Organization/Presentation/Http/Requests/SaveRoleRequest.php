@@ -12,6 +12,12 @@ use Illuminate\Validation\Rule;
 
 class SaveRoleRequest extends FormRequest
 {
+    /** @return list<PermissionKey> */
+    public function permissionKeys(): array
+    {
+        return array_values(array_map(fn (string $key): PermissionKey => PermissionKey::from($key), $this->validated('permissions')));
+    }
+
     public function authorize(): bool
     {
         Gate::authorize('manageRoles', $this->route('organization'));

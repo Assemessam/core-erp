@@ -7,6 +7,7 @@ use App\Modules\Organization\Application\Commands\CreateOrganization;
 use App\Modules\Organization\Application\Commands\RenameOrganization;
 use App\Modules\Organization\Application\Commands\SaveRole;
 use App\Modules\Organization\Application\Operations\AssignMembershipRole;
+use App\Modules\Organization\Domain\Authorization\PermissionKey;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Route;
 
@@ -116,14 +117,14 @@ it('protects direct role creation and update with owner-only persisted authority
 
     foreach ([null, $role] as $target) {
         if ($outcome === AccessDecision::ALLOWED) {
-            $saved = $save->handle($actor->id, $organization, $target, $target === null ? 'Created' : 'Updated', ['organizations.update']);
+            $saved = $save->handle($actor->id, $organization, $target, $target === null ? 'Created' : 'Updated', PermissionKey::OrganizationsUpdate);
             expect($saved->permissions->pluck('key')->all())->toBe(['organizations.update']);
             expect($saved->fresh()->name)->toBe($target === null ? 'Created' : 'Updated');
         } else {
             // Neither a dirty owner field nor cached relationship data can grant role administration.
             $organization->load('memberships.roles.permissions');
             $organization->owner_user_id = $actor->id;
-            expect(fn () => $save->handle($actor->id, $organization, $target, 'Denied', []))
+            expect(fn () => $save->handle($actor->id, $organization, $target, 'Denied'))
                 ->toThrow(function (AccessDenied $exception) use ($outcome) {
                     expect($exception->decision->outcome)->toBe($outcome);
                 });
@@ -149,13 +150,13 @@ it('rejects a foreign role in direct writes before changing any role or grant', 
     $other = app(CreateOrganization::class)->handle($owner, 'Elsewhere');
     $foreign = $other->roles()->create(['name' => 'Foreign']);
     $save = app(SaveRole::class);
-    expect(fn () => $save->handle($owner->id, $organization, $foreign, 'Stolen', []))
+    expect(fn () => $save->handle($owner->id, $organization, $foreign, 'Stolen'))
         ->toThrow(function (AccessDenied $exception) {
             expect($exception->decision->outcome)->toBe(AccessDecision::HIDDEN);
         });
     // Spoofing the in-memory tenant cannot evade the existing scoped, locked database lookup.
     $foreign->organization_id = $organization->id;
-    expect(fn () => $save->handle($owner->id, $organization, $foreign, 'Stolen', []))
+    expect(fn () => $save->handle($owner->id, $organization, $foreign, 'Stolen'))
         ->toThrow(ModelNotFoundException::class);
     expect($foreign->fresh()->name)->toBe('Foreign');
     expect($organization->roles()->count())->toBe(0);
@@ -172,7 +173,7 @@ it('translates direct application denials through the HTTP boundary without expo
         if ($operation === 'rename') {
             app(RenameOrganization::class)->handle($actor->id, $organization, 'Denied');
         } else {
-            app(SaveRole::class)->handle($actor->id, $organization, null, 'Denied', []);
+            app(SaveRole::class)->handle($actor->id, $organization, null, 'Denied');
         }
     });
     $this->postJson('/api/test-organization-denial')->assertStatus($status)->assertExactJson(['message' => $message]);

@@ -36,7 +36,7 @@ class OrganizationRoleController extends Controller
         $actor = $request->user();
         assert($actor instanceof User);
 
-        return new RoleResource($save->handle($actor->id, $organization, null, $request->validated('name'), $request->validated('permissions')));
+        return new RoleResource($save->handle($actor->id, $organization, null, $request->validated('name'), ...$request->permissionKeys()));
     }
 
     public function update(SaveRoleRequest $request, Organization $organization, Role $role, SaveRole $save): RoleResource
@@ -44,6 +44,6 @@ class OrganizationRoleController extends Controller
         $actor = $request->user();
         assert($actor instanceof User);
 
-        return new RoleResource($save->handle($actor->id, $organization, $role, $request->validated('name'), $request->validated('permissions')));
+        return new RoleResource($save->handle($actor->id, $organization, $role, $request->validated('name'), ...$request->permissionKeys()));
     }
 }

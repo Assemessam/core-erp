@@ -1,7 +1,10 @@
 <?php
 
 use App\Modules\Organization\Application\Authorization\AccessDenied;
+use App\Modules\Organization\Application\Exceptions\RoleNameConflict;
+use App\Modules\Organization\Domain\Memberships\CrossOrganizationRoleAssignment;
 use App\Modules\Organization\Infrastructure\Authorization\AccessResponse;
+use App\Modules\Organization\Presentation\Http\Exceptions\OrganizationFailureMapper;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -19,6 +22,8 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->map(AccessDenied::class, AccessResponse::exception(...));
+        $exceptions->map(RoleNameConflict::class, OrganizationFailureMapper::roleNameConflict(...));
+        $exceptions->map(CrossOrganizationRoleAssignment::class, OrganizationFailureMapper::crossOrganizationRoleAssignment(...));
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*') || $request->expectsJson(),
         );

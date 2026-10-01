@@ -556,3 +556,131 @@ Guest 401, unverified 403, hidden non-member 404, unauthorized member 403, forei
 Review the trusted actor inputs, persisted ownership/membership queries, resource-scope vs actor-access distinction in SaveRole, the exception adapter/registration, and direct-denial tests. Static guards are not complete data-flow/security proofs. Existing cross-origin PATCH/CORS and test-database isolation follow-ups remain deferred. The final plain diff stat excludes six untracked files; inspect those files too.
 
 Recommend a separately approved small checkpoint for pure membership-role tenant-invariant extraction and its error translation, while retaining the security tests established here. Identity migration should remain independently reviewable. **D ends here; no next checkpoint or Phase 1.4 work has begun.**
+
+# Phase 1.3.5E — Domain Invariants and Application Error Cleanup
+
+- Date: 2026-10-01
+- Status: E complete against local validation. Identity migration and Phase 1.4 have not started; overall 1.3.5 remains in progress.
+- Baseline: clean `refactor/ddd-architecture`, `5821956` (`refactor: centralize organization authorization`). No staging, commits, pushes, branch switches, resets or discarded work.
+
+## Domain invariant and persistence boundary
+
+The first pure Domain rule is `Domain/Memberships/RoleAssignmentRules::requireSameOrganization(string $membershipOrganizationId, string $roleOrganizationId)`. It requires exact equality and throws the specific PHP DomainException subclass CrossOrganizationRoleAssignment on mismatch. Both classes are independent of Laravel, Eloquent, HTTP and Application. The rule checks compatibility, not identifier syntax or persisted existence; actual organization identifiers remain ULID strings.
+
+AssignMembershipRole remains internal. Previously it compared supplied Eloquent attributes and constructed ValidationException; now it passes those scalar organization IDs to the Domain rule and performs the same syncWithoutDetaching operation. Inspection confirmed it did not previously load/reload either record: callers provide the loaded models. That contract, explicit pivot organization_id, idempotence, and lack of actor authorization remain unchanged. No new lookup, transaction, or membership-management endpoint was added.
+
+The Domain rule gives an early business failure, while the PostgreSQL composite foreign keys independently validate persisted tenant identity. A dirty model attribute may make scalar inputs appear compatible; it cannot bypass the existing database constraints. Tests retain raw SQL corruption checks and add a spoofed-model assignment check. No constraints or historical migrations changed.
+
+## Error classification and cleanup
+
+| Existing case | Classification and implementation |
+| --- | --- |
+| Cross-organization membership/role | Pure Domain invariant; CrossOrganizationRoleAssignment replaces Application ValidationException |
+| Role-name uniqueness race/conflict | Application persistence conflict; RoleNameConflict replaces ValidationException |
+| Malformed/unknown HTTP permission keys | Presentation validation remains in SaveRoleRequest; unchanged Rule::enum and field validation |
+| Invalid permission input from direct PHP caller | Native PermissionKey argument typing rejects the call before mutation; no HTTP validation dependency |
+| Unrelated database failures | Existing QueryException propagation remains; only SQLSTATE 23505 for roles_organization_name_unique becomes RoleNameConflict |
+
+SaveRole now takes `PermissionKey ...$permissions`. Callers pass enum cases or unpack a list of cases; no permission arguments clears grants. SaveRoleRequest::permissionKeys converts the already-validated string list, and the two controller calls unpack it. Clients still send the same array of strings. PHP rejects raw strings (including known-but-unconverted strings), arrays and null with TypeError before entering the use case. Undefined enum cases cannot be constructed. The database catalog allowlist and permission foreign key remain independent protection against raw corruption. No DTO or redundant Application string validator was introduced.
+
+SaveRole still owns authorization through the unchanged OrganizationAccess, role scoping, transaction, row lock, name update, permission replacement and rollback. It maps enum values to database keys at synchronization. The existing narrowly identified duplicate database error becomes RoleNameConflict after transaction rollback; the previous QueryException is retained for diagnostics. The exception has no HTTP status or JSON structure. No transaction/retry/concurrency redesign.
+
+Presentation/Http/Exceptions/OrganizationFailureMapper maps RoleNameConflict to the existing Laravel ValidationException name-field response, and CrossOrganizationRoleAssignment to its existing role-field response. bootstrap/app.php registers these two exact exception mappings. Domain/Application exceptions contain business messages only. The HTTP statuses (422), errors fields, envelopes and text remain unchanged. Assignment still has no production HTTP endpoint; a test-only route proves the adapter representation if the failure reaches HTTP.
+
+All ValidationException dependencies were removed from Organization Application. Architecture tests remove both former exceptions and now reject ValidationException for the entire Application layer. Domain-to-Application/Infrastructure/Presentation and framework dependencies remain forbidden. Application intentionally retains same-module Eloquent, DB transactions, QueryException, collection types, and the existing CreateOrganization→User dependency allowed by ADR 0005. Persistence-level model lookup errors retain Laravel's established rendering; no new HTTP exceptions or abort helpers were added.
+
+## Files changed
+
+Six new files under backend:
+
+- app/Modules/Organization/Domain/Memberships/RoleAssignmentRules.php
+- app/Modules/Organization/Domain/Memberships/CrossOrganizationRoleAssignment.php
+- app/Modules/Organization/Application/Exceptions/RoleNameConflict.php
+- app/Modules/Organization/Presentation/Http/Exceptions/OrganizationFailureMapper.php
+- tests/Unit/Organization/RoleAssignmentRulesTest.php
+- tests/Feature/Application/OrganizationFailuresTest.php
+
+Modified production/configuration: SaveRole, AssignMembershipRole, OrganizationRoleController (input adaptation only), SaveRoleRequest (conversion method only), bootstrap/app.php (specific error mappings), phpunit.xml (Unit suite discovery). Tests updated: Architecture/BoundariesTest, Feature/RbacTest, Application/OrganizationOperationsTest, Application/OrganizationWriteAuthorizationTest. README status, system overview, roadmap and this validation record updated. ADR 0005 and AGENTS.md unchanged.
+
+OrganizationAccess, AccessDecision, AccessDenied, AccessResponse, Policies, Eloquent models, CreateOrganization, RenameOrganization, ListOrganizations, routes, Resources, middleware, providers, Identity/Fortify, dependencies and frontend remain unchanged.
+
+## Test evidence and incremental results
+
+- Baseline Organization/RBAC/Application/characterization/Architecture: **64 passed / 701 assertions**.
+- Domain/assignment extraction with Unit, RBAC and Architecture: **26 / 311**.
+- Typed permissions/error cleanup with Unit/RBAC/Application/characterization/Architecture: **61 / 657**.
+- New failure tests plus RBAC and Unit: **27 / 168**.
+
+Five pure Unit cases cover equal identifiers (including ULID boundaries) and different identifiers with the exact Domain failure. tests/Unit uses plain Pest/PHPUnit; it does not extend the Laravel TestCase, boot the application, or access PostgreSQL. phpunit.xml includes it in normal backend quality.
+
+Ten new PostgreSQL-backed failure cases cover idempotent local assignment, Domain rejection without a pivot, database rejection despite spoofed attributes, direct duplicate-name create/update conflicts with no partial mutation, four invalid PHP permission input types, exact HTTP conflict/domain error translation, and exact unknown-key HTTP validation output. Existing success representations, sorting, clearing grants, scoped foreign roles, authorization and PostgreSQL corruption checks continue to run.
+
+The old rollback test used an unknown string to provoke a permission FK failure after updating a role name. Native enum typing now rejects that input before the transaction, so the rollback test instead injects an exception after a real role_permission insert using a test-local query listener. It verifies that the fault was reached and the role name and prior grants were rolled back together. The database is real and transaction behavior is not mocked. Existing raw SQL tests still independently reject unknown permissions and cross-tenant pivots.
+
+An initial full-quality run passed tests/Pint but Larastan could not prove the conversion returned a list. Adding array_values made the return shape explicit; the validated HTTP list and order are unchanged. No suppression or analysis-level reduction. Following session resumption, processes/temp artifacts were unavailable and Compose services stopped; the existing stack was restarted without rebuilding or migrating, then final backend validation completed.
+
+## Final results
+
+| Check | Result |
+| --- | --- |
+| Full backend quality / Pest | **99 passed, 855 assertions**, no skips |
+| Pure Unit suite separately | **5 passed, 7 assertions**, no Laravel/database |
+| Architecture separately | **9 passed, 193 assertions**, no skips |
+| Pint | Passed, 80 files |
+| Larastan/PHPStan | Level 8, 50 files, no errors |
+| Composer strict validation / platform check | Passed |
+| Composer audit | No security vulnerability advisories |
+| Frontend quality | ESLint, Prettier, vue-tsc, 28 Vitest tests / 7 files, production build passed |
+| npm audit | 0 vulnerabilities |
+| Complete pinned Playwright | 3 passed |
+| Infrastructure | Compose valid, five healthy services, PostgreSQL accepting connections, Redis PONG, Mailpit HTTP 200, API health/readiness and proxy status ok |
+| Migration status | All three historical migrations Ran; none executed |
+| Routes | Inspected before/after; same 11 API endpoints, route source unchanged |
+| Git | diff --check clean; migration/frontend diffs empty |
+
+Backend database tests remained sequential and completed before browser writes. The pre-change route JSON was a temporary artifact lost across resumption, so no final byte-comparison of that artifact is claimed; route source and registration were unchanged and the final route table/security tests passed. Local checks do not establish hosted CI or production deployment results.
+
+## Commands executed
+
+Inspection used cat/rg over guidance, ADR, checkpoint records, module classes/tests/migrations and Git branch/status/log/diff checks. Relevant validation:
+
+```sh
+docker compose exec -T backend php artisan route:list --path=api --json
+docker compose exec -T backend php vendor/bin/pest tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php tests/Feature/Application tests/Feature/ArchitectureCharacterizationTest.php tests/Architecture --compact
+docker compose exec -T backend php vendor/bin/pest tests/Unit tests/Feature/RbacTest.php tests/Architecture --compact
+docker compose exec -T backend php vendor/bin/pest tests/Unit tests/Feature/RbacTest.php tests/Feature/Application tests/Feature/ArchitectureCharacterizationTest.php tests/Architecture --compact
+docker compose exec -T backend php vendor/bin/pest tests/Feature/Application/OrganizationFailuresTest.php tests/Feature/RbacTest.php tests/Unit --compact
+docker compose exec -T backend php vendor/bin/pint app/Modules/Organization/Domain/Memberships app/Modules/Organization/Application/Exceptions app/Modules/Organization/Application/Commands/SaveRole.php app/Modules/Organization/Application/Operations/AssignMembershipRole.php app/Modules/Organization/Presentation/Http/Exceptions app/Modules/Organization/Presentation/Http/Controllers/OrganizationRoleController.php app/Modules/Organization/Presentation/Http/Requests/SaveRoleRequest.php bootstrap/app.php tests/Unit tests/Architecture/BoundariesTest.php tests/Feature/RbacTest.php tests/Feature/Application/OrganizationFailuresTest.php tests/Feature/Application/OrganizationOperationsTest.php tests/Feature/Application/OrganizationWriteAuthorizationTest.php
+docker compose exec -T backend composer quality
+docker compose exec -T backend php vendor/bin/pest --testsuite=Unit --compact
+docker compose exec -T backend php vendor/bin/pest --testsuite=Architecture --compact
+docker compose exec -T backend composer validate --strict
+docker compose exec -T backend composer check-platform-reqs
+docker compose exec -T backend composer audit
+docker compose exec -T frontend npm run quality
+docker compose exec -T frontend npm audit
+docker compose up -d --wait
+docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test
+docker compose config --quiet
+docker compose ps
+docker compose exec -T postgres pg_isready -U coreerp
+docker compose exec -T redis redis-cli ping
+curl --fail --silent --show-error http://localhost:8088/api/v1/health
+curl --fail --silent --show-error http://localhost:8088/api/v1/ready
+curl --fail --silent --show-error http://localhost:5174/api/v1/ready
+curl --fail --silent --show-error -o /dev/null -w 'Mailpit HTTP %{http_code}\n' http://localhost:8026/
+docker compose exec -T backend php artisan migrate:status
+git diff --check
+git diff -- backend/database/migrations
+git diff -- frontend
+git status --short
+git diff --stat
+```
+
+## Compatibility, review and stop point
+
+Existing HTTP payloads, 201/200 resources, 422 fields/messages, 401/403/404 security semantics, grant ordering and meta.can_manage remain unchanged. Internal callers intentionally use typed permission arguments and catch specific Domain/Application failures instead of Laravel ValidationException. No database schema, historical migrations, catalog seed data or frontend changes; no new production endpoints. Normal browser fixtures and ignored build/cache outputs are test artifacts, not claims of byte-identical database contents. The earlier CORS/deployment and database-test isolation follow-ups remain deferred.
+
+Review the scalar rule's responsibility versus persisted composite constraints, the variadic enum signature/input conversion, exact conflict detection and mapping, and the revised rollback fault injection. Plain git diff --stat excludes six new untracked files; inspect them too.
+
+Recommend the next separately approved checkpoint be a mechanical Identity migration: preserve User relationships, auth configuration, factory/model resolution, Fortify bindings, current-user representations, notifications and authentication URLs; keep it separate from any behavioral cleanup or Phase 1.4 functionality. **Stop after E; Identity migration has not begun.**

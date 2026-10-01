@@ -6,6 +6,7 @@ use App\Modules\Organization\Application\Commands\RenameOrganization;
 use App\Modules\Organization\Application\Commands\SaveRole;
 use App\Modules\Organization\Application\Operations\AssignMembershipRole;
 use App\Modules\Organization\Application\Queries\ListOrganizations;
+use App\Modules\Organization\Domain\Authorization\PermissionKey;
 use Illuminate\Support\Facades\DB;
 
 it('lists the explicit users owned and member organizations in name order without ambient authentication', function () {
@@ -48,7 +49,7 @@ it('renames the supplied model without changing ownership memberships roles or p
     $owner = User::factory()->create();
     $organization = app(CreateOrganization::class)->handle($owner, 'Original');
     $member = $organization->memberships()->create(['user_id' => User::factory()->create()->id]);
-    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Editor', ['organizations.update', 'roles.view']);
+    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Editor', PermissionKey::OrganizationsUpdate, PermissionKey::RolesView);
     app(AssignMembershipRole::class)->handle($member, $role);
     $memberships = $organization->memberships()->orderBy('id')->get()->toArray();
     $roles = $organization->roles()->with('permissions')->orderBy('id')->get()->toArray();
