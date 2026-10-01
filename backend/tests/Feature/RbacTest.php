@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\DB;
 
 function rbacOrganization(?User $owner = null): Organization
 {
-    return app(CreateOrganization::class)->handle($owner ?? User::factory()->create(), 'RBAC');
+    return app(CreateOrganization::class)->handle(($owner ?? User::factory()->create())->id, 'RBAC');
 }
 
 it('requires verified authentication on all RBAC endpoints', function () {

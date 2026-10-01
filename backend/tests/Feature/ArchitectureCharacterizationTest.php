@@ -39,7 +39,7 @@ it('resolves the configured Fortify actions and response adapters', function () 
 it('resolves persisted identity through authentication and organization relationships', function () {
     $owner = User::factory()->create();
     $member = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Identity wiring');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Identity wiring');
     $membership = $organization->memberships()->create(['user_id' => $member->id]);
 
     expect(Auth::createUserProvider('users')->retrieveById($owner->id))
@@ -60,7 +60,7 @@ it('returns the unchanged public current-user resource before verification', fun
 
 it('returns message-only denials before validating organization and RBAC payloads', function (string $actorKind, int $status) {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Private workspace');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Private workspace');
     $role = $organization->roles()->create(['name' => 'Private role']);
 
     if ($actorKind !== 'guest') {
@@ -103,7 +103,7 @@ it('returns message-only denials before validating organization and RBAC payload
 ]);
 
 it('keeps missing and policy-hidden organizations as message-only 404 responses', function () {
-    $organization = app(CreateOrganization::class)->handle(User::factory()->create(), 'Hidden');
+    $organization = app(CreateOrganization::class)->handle(User::factory()->create()->id, 'Hidden');
     $this->actingAs(User::factory()->create());
 
     foreach ([$organization->id, '01AAAAAAAAAAAAAAAAAAAAAAAA'] as $id) {
@@ -116,8 +116,8 @@ it('keeps missing and policy-hidden organizations as message-only 404 responses'
 
 it('binds nested roles within the route organization before request validation', function () {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Local');
-    $other = app(CreateOrganization::class)->handle($owner, 'Other');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Local');
+    $other = app(CreateOrganization::class)->handle($owner->id, 'Other');
     $local = $organization->roles()->create(['name' => 'Local role']);
     $foreign = $other->roles()->create(['name' => 'Foreign role']);
     $this->actingAs($owner);
@@ -135,7 +135,7 @@ it('binds nested roles within the route organization before request validation',
 
 it('returns field validation errors and the application duplicate-name message without mutation', function () {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Validation');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Validation');
     $role = $organization->roles()->create(['name' => 'Editors']);
     $this->actingAs($owner);
     $url = '/api/v1/organizations/'.$organization->id.'/roles';

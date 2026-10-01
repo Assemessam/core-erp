@@ -1,6 +1,6 @@
 # ADR 0005: DDD-oriented modular monolith with a pragmatic application layer
 
-- Status: Accepted; Phase 1.3.5A establishes documentation and guardrails only
+- Status: Accepted; implemented through Phase 1.3.5G
 - Date: 2026-09-30
 
 ## Context and compatibility requirement
@@ -22,11 +22,11 @@ Adopt a DDD-oriented modular monolith, pragmatic Application layer, and CQRS-lit
 
 Membership and tenant RBAC stay together: roles and memberships belong to an organization, grants connect them, ownership controls role administration, and the owner must remain a member. Splitting them would create circular coordination around these invariants. Organization is not a giant aggregate containing all tenant data.
 
-Introduce the two modules only in authorized migration checkpoints. No CRM, Sales, Inventory, Finance, Accounting, HR, Payroll, Manufacturing, or other future module folders now. Contexts communicate through intentionally public application entry points and identifiers/results, not foreign aggregate/model internals. Organization's owner/user Eloquent relationships may remain narrowly documented infrastructure references to Identity's User; they do not authorize Identity writes.
+The two current modules were introduced in authorized migration checkpoints. No CRM, Sales, Inventory, Finance, Accounting, HR, Payroll, Manufacturing, or other future module folders exist. Contexts communicate through intentionally public application entry points and identifiers/results, not foreign aggregate/model internals. Organization's owner/user Eloquent relationships remain narrowly documented infrastructure references to Identity's User; they do not authorize Identity writes.
 
 ## Four available layers
 
-Target convention: `app/Modules/{Context}/{Domain,Application,Infrastructure,Presentation}`. Create a layer only for actual code. No module tree is created in 1.3.5A.
+Convention: `app/Modules/{Context}/{Domain,Application,Infrastructure,Presentation}`. Create a layer only for actual code. Identity currently has only Infrastructure and Presentation; Organization has all four.
 
 | Layer | Responsibility |
 | --- | --- |
@@ -57,7 +57,7 @@ Queries may use Eloquent, query builder, or SQL without reconstructing aggregate
 
 ## Authorization and tenant isolation
 
-Keep Laravel Policies. A later checkpoint will centralize Organization decisions in an application evaluator; Policies become Laravel adapters and use cases reuse the same decisions. Do not implement that evaluator in 1.3.5A. Domain invariants, such as tenant-compatible role assignment and future owner lifecycle protection, remain separate from actor authorization.
+Keep Laravel Policies. OrganizationAccess centralizes persisted Organization decisions in Application; Policies are Laravel adapters and authorized write use cases reuse those decisions. Domain invariants, such as tenant-compatible role assignment and future owner lifecycle protection, remain separate from actor authorization.
 
 Preserve authenticated/verified middleware, authorization before validation, guest 401, unverified 403, non-member 404, and insufficient-authority member 403. Ownership is explicit, never inferred from a role name. Owners need no role; role mutation remains owner-only. Preserve permission unions, fresh persisted checks, next-check revocation, and rejection of spoofed in-memory membership attributes. AssignMembershipRole stays internal, with future callers responsible for membership-administration authorization.
 
@@ -71,7 +71,7 @@ Keep current Eloquent route-model binding as a Presentation adapter. Preserve pa
 
 ## Laravel integration
 
-Keep historical migrations, factories, seeders, configuration, and current central route registration in conventional locations. Register module providers explicitly. Moved Policies should receive explicit model mappings. A future User move must update auth configuration, both directions of factory resolution, Fortify bindings, and imports. Existing `App\\` PSR-4 autoloading covers modules; no module loader is needed. Keep platform health/readiness outside business contexts.
+Keep historical migrations, factories, seeders, configuration, and current central route registration in conventional locations. Register module providers explicitly and map OrganizationPolicy to Organization. The User move updated auth configuration, both directions of factory resolution, Fortify bindings, and imports. Existing `App\\` PSR-4 autoloading covers modules; no module loader is needed. Keep platform health/readiness outside business contexts.
 
 ## Events and Shared Kernel policy
 
@@ -94,15 +94,17 @@ Strict direction: `Presentation → Application → Domain`; Infrastructure impl
 
 Cross-module application code uses intentionally public application contracts, not foreign Eloquent models. Document narrow infrastructure exceptions. Add rules progressively during migration rather than pretending existing legacy code already follows all target boundaries.
 
+In the implemented contexts, Organization Application receives the authenticated owner/user ID as a scalar and has no Identity import. Five Organization adapters reference Identity's Eloquent User: the Organization and OrganizationMembership persistence relationships, the Laravel OrganizationPolicy actor type, and the two HTTP controllers' authenticated-user type assertions. These are explicit persistence/framework edges; Identity has no Organization dependency. Fortify remains Identity Infrastructure integration, while its HTTP responses and current-user resource live in Identity Presentation. Identity needs no Domain or Application layer yet.
+
 ## Testing and enforcement
 
 Use the installed Pest architecture plugin, without another architecture package. PHPUnit discovers `tests/Architecture` in normal `composer test`/`composer quality`. Architecture tests do not boot Laravel or touch a database.
 
 Active guardrails reject direct database facade/manager/connection dependencies and explicit transaction-control calls in controllers; HTTP dependencies in current models; ambient session/request dependencies in current business actions/models/policies/enums; and PHP `global`/`$GLOBALS` under app. Syntax checks use the installed PHP parser rather than regex.
 
-Domain/Application tests discover conventional module layer directories. They explicitly skip while layers do not exist and activate when introduced. Domain rejects framework/outer dependencies; Application rejects HTTP delivery and ambient helpers. No stubs are required.
+Domain/Application tests discover conventional module layer directories and assert the current Organization layers exist. Domain rejects framework/outer dependencies; Application rejects HTTP delivery, ambient helpers, and Identity dependencies. No Identity layer stubs are required.
 
-These checks are not data-flow analysis. They cannot prove tenant predicates, identify dynamic transaction calls, rule out every singleton/session/cache tenant resolver, or detect every indirect mutation. Current controller Eloquent mutation is acknowledged legacy behavior awaiting authorized extraction. Reviews and integration/security tests remain necessary. Extend old/new namespace and cross-module rules with each boundary change.
+These checks are not data-flow analysis. They cannot prove tenant predicates, identify dynamic transaction calls, rule out every singleton/session/cache tenant resolver, or detect every indirect mutation. Reviews and integration/security tests remain necessary. Extend cross-module rules with each future boundary change.
 
 | Test level | Purpose | Database |
 | --- | --- | --- |
@@ -130,4 +132,4 @@ The chosen architecture improves ownership, reviewability, and domain testing wh
 
 Revisit when real workflows need rich aggregates, aggregate persistence repeats, concurrency requirements change, multiple contexts share semantics, events gain consumers, reliable delivery is needed, or dependency rules become difficult to express in Pest.
 
-Phase 1.3.5A is documentation, guardrails, characterization, and validation only. Application extraction and namespace migration require separately authorized reviewable checkpoints. The whole Phase 1.3.5 is not complete after A. Phase 1.4 remains unimplemented.
+Phase 1.3.5 was implemented through separately authorized checkpoints A–G. Phase 1.4 remains unimplemented.

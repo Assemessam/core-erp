@@ -7,16 +7,17 @@ use App\Modules\Organization\Application\Commands\SaveRole;
 use App\Modules\Organization\Application\Operations\AssignMembershipRole;
 use App\Modules\Organization\Application\Queries\ListOrganizations;
 use App\Modules\Organization\Domain\Authorization\PermissionKey;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\OrganizationMembership;
 use Illuminate\Support\Facades\DB;
 
 it('lists the explicit users owned and member organizations in name order without ambient authentication', function () {
     $actor = User::factory()->create();
     $other = User::factory()->create();
     $create = app(CreateOrganization::class);
-    $zulu = $create->handle($actor, 'Zulu');
-    $alpha = $create->handle($other, 'Alpha');
+    $zulu = $create->handle($actor->id, 'Zulu');
+    $alpha = $create->handle($other->id, 'Alpha');
     $alpha->memberships()->create(['user_id' => $actor->id]);
-    $create->handle($other, 'Unrelated');
+    $create->handle($other->id, 'Unrelated');
 
     expect(auth()->check())->toBeFalse();
     $query = new ListOrganizations;
@@ -28,18 +29,30 @@ it('lists the explicit users owned and member organizations in name order withou
 
 it('returns no organizations for an explicit user with no memberships despite an authenticated owner', function () {
     $owner = User::factory()->create();
-    app(CreateOrganization::class)->handle($owner, 'Owned');
+    app(CreateOrganization::class)->handle($owner->id, 'Owned');
     $nonMember = User::factory()->create();
     $this->actingAs($owner);
 
     expect((new ListOrganizations)->handle($nonMember->id))->toBeEmpty();
 });
 
+it('creates for the explicit owner ID despite a different authenticated session', function () {
+    $owner = User::factory()->create();
+    $other = User::factory()->create();
+    $this->actingAs($other);
+
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Explicit owner');
+
+    expect($organization->owner_user_id)->toBe($owner->id);
+    expect(OrganizationMembership::query()->where('organization_id', $organization->id)->pluck('user_id')->all())
+        ->toBe([$owner->id]);
+});
+
 it('uses the session actor rather than a client-supplied list user identifier', function () {
     $actor = User::factory()->create();
     $other = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($actor, 'Visible');
-    app(CreateOrganization::class)->handle($other, 'Hidden');
+    $organization = app(CreateOrganization::class)->handle($actor->id, 'Visible');
+    app(CreateOrganization::class)->handle($other->id, 'Hidden');
 
     $this->actingAs($actor)->getJson('/api/v1/organizations?user_id='.$other->id)
         ->assertOk()->assertExactJson(['data' => [['id' => $organization->id, 'name' => 'Visible']]]);
@@ -47,7 +60,7 @@ it('uses the session actor rather than a client-supplied list user identifier', 
 
 it('renames the supplied model without changing ownership memberships roles or permission grants', function () {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Original');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Original');
     $member = $organization->memberships()->create(['user_id' => User::factory()->create()->id]);
     $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Editor', PermissionKey::OrganizationsUpdate, PermissionKey::RolesView);
     app(AssignMembershipRole::class)->handle($member, $role);
@@ -70,7 +83,7 @@ it('renames the supplied model without changing ownership memberships roles or p
 
 it('keeps rename input validation at the HTTP boundary', function (string $name) {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Unchanged');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Unchanged');
 
     $this->actingAs($owner)->patchJson('/api/v1/organizations/'.$organization->id, ['name' => $name])
         ->assertUnprocessable()->assertJsonValidationErrors('name');

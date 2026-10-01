@@ -10,7 +10,7 @@ use Illuminate\Support\Str;
 
 function createOrganizationFor(User $owner, string $name = 'Acme'): Organization
 {
-    return app(CreateOrganization::class)->handle($owner, $name);
+    return app(CreateOrganization::class)->handle($owner->id, $name);
 }
 
 it('requires authentication for every organization endpoint', function () {

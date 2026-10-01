@@ -29,7 +29,7 @@ class OrganizationController extends Controller
     {
         $owner = $request->user();
         assert($owner instanceof User);
-        $organization = $create->handle($owner, $request->validated('name'));
+        $organization = $create->handle($owner->id, $request->validated('name'));
 
         return new OrganizationResource($organization);
     }

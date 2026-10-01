@@ -1,7 +1,6 @@
 <?php
 
 use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
-use App\Modules\Organization\Application\Commands\CreateOrganization;
 use App\Modules\Organization\Application\Commands\RenameOrganization;
 use App\Modules\Organization\Application\Queries\ListOrganizations;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPolicy;
@@ -32,8 +31,11 @@ arch('only existing organization relationships and actor adapters consume the Id
     ->expect('App\\Modules\\Organization')->not->toUse(User::class)
     ->ignoring([
         Organization::class, OrganizationMembership::class, OrganizationPolicy::class,
-        CreateOrganization::class, OrganizationController::class, OrganizationRoleController::class,
+        OrganizationController::class, OrganizationRoleController::class,
     ]);
+
+arch('Organization Application does not depend on Identity')
+    ->expect('App\\Modules\\Organization\\Application')->not->toUse('App\\Modules\\Identity');
 
 $appDirectory = dirname(__DIR__, 2).'/app';
 $moduleDirectories = glob($appDirectory.'/Modules/*', GLOB_ONLYDIR) ?: [];
@@ -45,6 +47,12 @@ $outerNamespaces = ['App\\Http', 'App\\Models', 'App\\Actions', 'App\\Policies',
 $presentationNamespaces = ['App\\Http'];
 $modelNamespaces = ['App\\Models'];
 $businessNamespaces = ['App\\Actions', 'App\\Models'];
+
+it('has no obsolete global business directories', function () use ($appDirectory) {
+    foreach (['Actions', 'Models', 'Enums', 'Policies', 'Queries', 'Http/Requests', 'Http/Responses'] as $directory) {
+        expect(is_dir($appDirectory.'/'.$directory))->toBeFalse($directory.' belongs in an owning module.');
+    }
+});
 
 foreach ($moduleDirectories as $directory) {
     $namespace = 'App\\Modules\\'.basename($directory);
@@ -89,14 +97,16 @@ arch('extracted organization operations are independent of HTTP and ambient acto
         'auth', 'request', 'response', 'session', 'abort', 'abort_if', 'abort_unless',
     ]);
 
-it('keeps Domain independent of framework and outer layers when introduced', function () use ($domainNamespaces, $outerNamespaces) {
+it('keeps Domain independent of framework and outer layers', function () use ($domainNamespaces, $outerNamespaces) {
+    expect($domainNamespaces)->not->toBeEmpty();
     expect($domainNamespaces)->not->toUse([
         'Illuminate', 'Laravel', 'Symfony', ...$outerNamespaces,
         'app', 'auth', 'request', 'response', 'session', 'resolve', 'config', 'event', 'dispatch', 'abort',
     ]);
-})->skip($domainNamespaces === [], 'No module Domain layer exists yet; activates automatically when introduced.');
+});
 
-it('keeps Application independent of HTTP delivery when introduced', function () use ($applicationNamespaces, $presentationNamespaces) {
+it('keeps Application independent of HTTP delivery', function () use ($applicationNamespaces, $presentationNamespaces) {
+    expect($applicationNamespaces)->not->toBeEmpty();
     expect($applicationNamespaces)->not->toUse([
         ...$presentationNamespaces,
         'Illuminate\\Http', 'Illuminate\\Foundation\\Http', 'Illuminate\\Routing',
@@ -106,9 +116,8 @@ it('keeps Application independent of HTTP delivery when introduced', function ()
         'auth', 'request', 'response', 'session', 'abort', 'abort_if', 'abort_unless',
     ]);
     expect($applicationNamespaces)->not->toUse('Illuminate\\Validation\\ValidationException');
-    // CreateOrganization reads only the explicit owner's key; no Identity mutation is authorized.
-    expect($applicationNamespaces)->not->toUse('App\\Modules\\Identity\\Infrastructure\\Eloquent\\Models\\User')->ignoring(CreateOrganization::class);
-})->skip($applicationNamespaces === [], 'No module Application layer exists yet; activates automatically when introduced.');
+    expect($applicationNamespaces)->not->toUse('App\\Modules\\Identity');
+});
 
 it('keeps explicit transaction control out of controllers', function () use ($controllerDirectories) {
     // Inspect PHP syntax, not text patterns; this also catches Model::getConnection()->transaction().

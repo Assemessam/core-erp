@@ -11,7 +11,7 @@ it('evaluates membership ownership and permissions from explicit persisted ident
     $owner = User::factory()->create();
     $member = User::factory()->create();
     $outsider = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Access');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Access');
     $membership = $organization->memberships()->create(['user_id' => $member->id]);
     $access = app(OrganizationAccess::class);
 
@@ -52,7 +52,7 @@ it('keeps policy and evaluator outcomes in parity for every current ability', fu
     $owner = User::factory()->create();
     $member = User::factory()->create();
     $outsider = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Parity');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Parity');
     $organization->memberships()->create(['user_id' => $member->id]);
     $access = app(OrganizationAccess::class);
 
@@ -77,7 +77,7 @@ it('keeps policy and evaluator outcomes in parity for every current ability', fu
 it('uses fresh persisted ownership and still requires the owner membership', function () {
     $owner = User::factory()->create();
     $successor = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Ownership');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Ownership');
     $membership = $organization->memberships()->create(['user_id' => $successor->id]);
     $organization->load('owner', 'memberships');
     // Change a separate model so the original organization and its relationships remain stale.

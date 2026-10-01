@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Route;
 
 it('protects direct rename using the explicit actor without HTTP or ambient authority', function (string $actorKind, string $outcome) {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Original');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Original');
     $actor = $actorKind === 'owner' ? $owner : User::factory()->create();
     if (in_array($actorKind, ['member', 'editor'])) {
         $membership = $organization->memberships()->create(['user_id' => $actor->id]);
@@ -46,7 +46,7 @@ it('protects direct rename using the explicit actor without HTTP or ambient auth
 it('rechecks direct rename after permission role and membership revocation despite stale or spoofed objects', function () {
     $owner = User::factory()->create();
     $actor = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Original');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Original');
     $membership = $organization->memberships()->create(['user_id' => $actor->id]);
     $role = $organization->roles()->create(['name' => 'Editor']);
     $role->permissions()->sync(['organizations.update']);
@@ -76,8 +76,8 @@ it('rechecks direct rename after permission role and membership revocation despi
 
 it('never lets permission or ownership in another organization authorize a direct rename', function () {
     $actor = User::factory()->create();
-    $owned = app(CreateOrganization::class)->handle($actor, 'Owned');
-    $other = app(CreateOrganization::class)->handle(User::factory()->create(), 'Other');
+    $owned = app(CreateOrganization::class)->handle($actor->id, 'Owned');
+    $other = app(CreateOrganization::class)->handle(User::factory()->create()->id, 'Other');
     $role = $owned->roles()->create(['name' => 'Editor']);
     $role->permissions()->sync(['organizations.update']);
     app(AssignMembershipRole::class)->handle($owned->memberships()->sole(), $role);
@@ -96,7 +96,7 @@ it('never lets permission or ownership in another organization authorize a direc
 
 it('protects direct role creation and update with owner-only persisted authority', function (string $actorKind, string $outcome) {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Roles');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Roles');
     $actor = $actorKind === 'owner' ? $owner : User::factory()->create();
     if (in_array($actorKind, ['member', 'permissions', 'other owner'])) {
         $membership = $organization->memberships()->create(['user_id' => $actor->id]);
@@ -107,7 +107,7 @@ it('protects direct role creation and update with owner-only persisted authority
         }
     }
     if (in_array($actorKind, ['other owner', 'outsider'])) {
-        app(CreateOrganization::class)->handle($actor, 'Elsewhere');
+        app(CreateOrganization::class)->handle($actor->id, 'Elsewhere');
     }
     $role = $organization->roles()->create(['name' => 'Existing']);
     $role->permissions()->sync(['roles.view']);
@@ -146,8 +146,8 @@ it('protects direct role creation and update with owner-only persisted authority
 
 it('rejects a foreign role in direct writes before changing any role or grant', function () {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Here');
-    $other = app(CreateOrganization::class)->handle($owner, 'Elsewhere');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Here');
+    $other = app(CreateOrganization::class)->handle($owner->id, 'Elsewhere');
     $foreign = $other->roles()->create(['name' => 'Foreign']);
     $save = app(SaveRole::class);
     expect(fn () => $save->handle($owner->id, $organization, $foreign, 'Stolen'))
@@ -164,7 +164,7 @@ it('rejects a foreign role in direct writes before changing any role or grant', 
 
 it('translates direct application denials through the HTTP boundary without exposing internals', function (string $operation, bool $member, int $status, string $message) {
     $actor = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle(User::factory()->create(), 'Original');
+    $organization = app(CreateOrganization::class)->handle(User::factory()->create()->id, 'Original');
     if ($member) {
         $organization->memberships()->create(['user_id' => $actor->id]);
     }

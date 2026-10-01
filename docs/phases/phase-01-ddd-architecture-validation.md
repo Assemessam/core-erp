@@ -774,3 +774,103 @@ Initial validation corrections: the new provider test first omitted the provider
 - Existing PostgreSQL outer-transaction/schema-manipulation test limitations remain. Backend tests were not parallelized. Existing CORS cross-origin PATCH concern is unchanged and deferred; the supported same-origin proxy passes.
 - Review factory wiring, explicit provider registration, removal of the unused inverse relationship, the /me adapter, and the six exact cross-context exceptions. Static dependency rules are not a proof of absence of indirect Identity writes or tenant leaks.
 - No staging, commit, push, branch switch, reset or discarded work. Stop after F. Recommend reviewing/committing this checkpoint before separately authorizing the final cleanup/enforcement inventory; do not introduce additional abstractions merely for symmetry.
+
+## Phase 1.3.5G — Final Architecture Enforcement and Cleanup
+
+Status: complete locally, awaiting review/commit. This final checkpoint completes the scoped Phase 1.3.5 implementation. Phase 1.4 remains unimplemented. Started from clean branch `refactor/ddd-architecture` at committed F baseline `0d8b4f7` (`refactor: move identity integration into module`). Complete baseline backend: 103 passed, 880 assertions. Inspected AGENTS.md, ADR 0005, this validation history, both modules, global app folders, cross-module imports, architecture exceptions, provider/config/factory wiring, central routes and tracked deployment examples before editing.
+
+### A–G outcome
+
+| Checkpoint | Result |
+| --- | --- |
+| A | ADR, guardrails, architecture and HTTP/security characterization |
+| B | Organization listing and rename Application entry points |
+| C | Organization module namespace migration |
+| D | Persisted OrganizationAccess evaluator shared by Policies and authorized writes |
+| E | Pure membership-role tenant invariant and typed Application/HTTP failures |
+| F | Identity module migration with conventional Fortify and Eloquent adapters |
+| G | Explicit owner ID for organization creation, final dependency enforcement, removal of obsolete global business directories and documentation alignment |
+
+Actual business-module tree (no empty future modules):
+
+```text
+backend/app/Modules/
+├── Identity/
+│   ├── Infrastructure/
+│   │   ├── Eloquent/Models/User.php
+│   │   ├── Fortify/{CreateNewUser,PasswordRules,ResetUserPassword}.php
+│   │   └── Providers/FortifyServiceProvider.php
+│   └── Presentation/Http/
+│       ├── Controllers/CurrentUserController.php
+│       ├── Resources/UserResource.php
+│       └── Responses/{LoginResponse,PasswordResetLinkResponse}.php
+└── Organization/
+    ├── Domain/
+    │   ├── Authorization/PermissionKey.php
+    │   └── Memberships/{RoleAssignmentRules,CrossOrganizationRoleAssignment}.php
+    ├── Application/
+    │   ├── Authorization/{OrganizationAccess,AccessDecision,AccessDenied}.php
+    │   ├── Commands/{CreateOrganization,RenameOrganization,SaveRole}.php
+    │   ├── Exceptions/RoleNameConflict.php
+    │   ├── Operations/AssignMembershipRole.php
+    │   └── Queries/ListOrganizations.php
+    ├── Infrastructure/
+    │   ├── Authorization/{OrganizationPolicy,AccessResponse}.php
+    │   ├── Eloquent/Models/{Organization,OrganizationMembership,Role,Permission}.php
+    │   └── Providers/OrganizationServiceProvider.php
+    └── Presentation/Http/
+        ├── Controllers/{OrganizationController,OrganizationRoleController}.php
+        ├── Exceptions/OrganizationFailureMapper.php
+        ├── Requests/{StoreOrganizationRequest,UpdateOrganizationRequest,SaveRoleRequest}.php
+        └── Resources/{OrganizationResource,RoleResource,PermissionResource}.php
+```
+
+Identity intentionally has no Domain/Application layer. The hybrid strategy retains current Eloquent models. No repositories, mapper, bus, domain events, future ERP modules or Shared Kernel were introduced. Platform code remains global: base/HealthController, HealthResource, empty conventional AppServiceProvider and ReadinessCheck. Central route files, factories, seeders and historical migrations retain Laravel locations.
+
+### Dependency and behavior review
+
+CreateOrganization formerly accepted Identity User and read `getKey()` twice. It now accepts `int $ownerUserId`, matching the users table key, and writes that same ID to `organizations.owner_user_id` and the owner membership inside the unchanged DB transaction. OrganizationController obtains the ID from `$request->user()` after auth and verification middleware and Form Request validation; no client owner value enters the command. Existing HTTP spoofing, atomic rollback, deferred membership constraint and owner/201/resource tests remain. A new Application test proves an explicit owner ID governs creation even with a different ambient authenticated session.
+
+Five direct Organization → Identity User references remain: two Eloquent persistence relationships, the concrete User Policy actor type Laravel supplies, and authenticated-user type assertions in two HTTP controllers. These are narrow framework/persistence adapters. No Organization Domain/Application import of Identity remains; Identity has no Organization import. Keeping controller assertions preserves clear `int` ID typing for Larastan without an artificial auth interface. The architecture suite allows User only in those five classes and bars all other Identity internals. The prior CreateOrganization allowlist exception was removed. Organization Domain remains pure; Application rejects Presentation, HTTP, Gate/Policy and ambient auth/request dependencies. Syntax-based controller transaction/mutation checks and global-state guard remain; new checks assert legacy business directories stay absent.
+
+Organization Application's intentional lightweight persistence dependencies are: Organization in CreateOrganization, RenameOrganization, SaveRole, OrganizationAccess and ListOrganizations; OrganizationMembership in OrganizationAccess and AssignMembershipRole; Role in SaveRole and AssignMembershipRole; Eloquent Collection in ListOrganizations; Laravel DB transaction facade in CreateOrganization/SaveRole; and QueryException in SaveRole's existing unique-name conflict mapping. They implement current read/write needs under ADR 0005's pragmatic exception. No dependency needs removal merely for architectural purity. CreateOrganization is the trusted creation bootstrap command; RenameOrganization and SaveRole are public actor-authorized write use cases; AssignMembershipRole is internal and has no route or human authorization responsibility. ListOrganizations remains membership-scoped; role/catalog reads remain Policy-protected lightweight Eloquent/enum reads in Presentation. No extra query class or query bus was warranted.
+
+No controller directly performs persistence writes, pivot synchronization, permission calculation or transaction control. The role index has a small, authorization-protected Eloquent read and `meta.can_manage` Gate check, acceptable under the approved read-side convention. OrganizationAccess evaluates persisted tenancy/permission state; OrganizationPolicy adapts it to Laravel. The six existing error/status and 404 non-disclosure tests remain. The API, route files/methods/middleware, CSRF/Fortify/Sanctum/Redis session behavior and frontend source are unchanged.
+
+Obsolete empty global directories removed from the working tree: `app/Actions/Fortify`, `app/Actions`, `app/Models`, `app/Enums`, `app/Policies`, `app/Queries`, `app/Http/Requests`, `app/Http/Responses`. Empty directories were already untracked by Git, so no file deletion appears in the diff. Searches found no obsolete moved-class imports in production, tests, config, routes, factories, seeders or current architecture docs. Historical validation entries intentionally retain old namespace references; README retains `App\Models\User` solely in the external AUTH_MODEL deployment note. Repository-controlled environment examples, Compose, CI and deployment references do not override AUTH_MODEL. External overrides/config caches using the old class must be updated and cleared/rebuilt during deployment. Local secret `.env` files were untouched.
+
+Provider review: AppServiceProvider is the conventional empty platform provider; OrganizationServiceProvider explicitly maps Organization to OrganizationPolicy; Identity FortifyServiceProvider owns its actions/responses/rate limits/reset URL; bootstrap/providers.php registers each once. UserFactory and auth provider already point to moved Identity User. The central routes remain compact; no module route loader was added. ADR 0005, AGENTS.md, README, architecture overview and roadmap now describe the implemented boundaries and the five exceptions. Earlier validation sections remain historical checkpoint records.
+
+### Final validation
+
+All commands were run on the existing sequential PostgreSQL-backed test environment, without parallelizing backend database tests. The existing migration compatibility test ran within the complete backend suite; no fresh-database reset was performed against development data.
+
+| Command / gate | Result |
+| --- | --- |
+| `docker compose exec -T backend composer test` before edit | 103 passed / 880 assertions |
+| Focused Organization Application/Organization/RBAC/Architecture Pest run | 69 passed / 594 assertions before final added test |
+| `docker compose exec -T backend composer dump-autoload --optimize --strict-psr` | Passed; optimized autoload generated, 9,052 classes |
+| `docker compose exec -T backend composer quality` | 106 passed / 893 assertions; Pint 81 files; Larastan level 8 with no errors |
+| `docker compose exec -T backend php vendor/bin/pest --testsuite=Unit --compact` | 5 passed / 7 assertions |
+| `docker compose exec -T backend php vendor/bin/pest --testsuite=Architecture --compact` | 14 passed / 223 assertions; no skips |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Application --compact` | 36 passed / 201 assertions |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/ArchitectureCharacterizationTest.php tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php --compact` | 31 passed / 367 assertions |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Auth --compact` | 13 passed / 71 assertions |
+| `docker compose exec -T backend composer validate --strict` | Valid |
+| `docker compose exec -T backend composer check-platform-reqs` | All requirements passed |
+| `docker compose exec -T backend composer audit` | No advisories |
+| `docker compose exec -T frontend npm run quality` | ESLint, Prettier, TypeScript, 7 Vitest files / 28 tests and production build passed |
+| `docker compose exec -T frontend npm audit` | Zero vulnerabilities |
+| Full Playwright browser suite in pinned `mcr.microsoft.com/playwright:v1.63.0-noble` image | 3 passed, none skipped: auth/session, Organization isolation, RBAC persistence |
+| `docker compose config --quiet`, `docker compose ps` | Valid; backend, frontend, PostgreSQL, Redis and Mailpit healthy |
+| `pg_isready`, `redis-cli ping`, Mailpit HTTP | Accepting connections, PONG, HTTP 200 |
+| Backend health/readiness and frontend proxy readiness `curl` | All HTTP 200, `data.status=ok` |
+| `php artisan route:list --path=api --json` | Final Identity/Organization controllers and existing auth/verified middleware present; route file unchanged |
+| `php artisan migrate:status` | All three historical migrations Ran |
+| `git diff --check` | Passed |
+| `git diff -- backend/database/migrations`, `git diff -- frontend` | Both empty |
+| Final old-namespace and module-dependency searches | No obsolete code imports; five explicit Organization User adapters; zero Identity → Organization or Organization Application → Identity imports |
+
+The new test is in `OrganizationOperationsTest`; existing HTTP owner-spoofing coverage remains in `OrganizationsTest`. `BoundariesTest` removes CreateOrganization from the allowlist, adds Organization Application isolation and absent-global-directory checks, and requires actual Organization Domain/Application layers. Existing Application tests changed only their CreateOrganization call sites to pass user IDs. No schema, migration, frontend source, route, authentication, authorization or tenant-rule change was intentional. These suites passed after the new contract was applied.
+
+Known deferred concerns: a true cross-origin PATCH preflight remains disallowed by current CORS configuration (same-origin Vite proxy works); incidental Laravel missing-model 404 text can reveal class identifiers although the 404 status/envelope is characterized; external AUTH_MODEL overrides and stale configuration caches need deployment updates; PostgreSQL schema-manipulation tests remain sequential and use the configured database. Architecture tests complement, rather than prove, dynamic authorization and tenant scoping. Phase 1.4 may begin only after this diff is reviewed and separately authorized; no invitations or member-management work is included here.

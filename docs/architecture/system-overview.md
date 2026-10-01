@@ -9,13 +9,13 @@ flowchart LR
     API --> Redis[(Redis 8)]
 ```
 
-The SPA owns presentation and navigation. Vue Router carries organization context; Axios handles HTTP; Pinia holds public authentication and organization state. Laravel owns the HTTP contract, authorization, and business rules. Controllers coordinate requests, an action performs transactional organization creation, Policies authorize organization access, and API Resources shape responses. PostgreSQL stores users, recovery tokens, organizations, memberships, organization roles, permission definitions, and relational grants. Redis stores cache and server-side sessions. Mailpit catches development email.
+The SPA owns presentation and navigation. Vue Router carries organization context; Axios handles HTTP; Pinia holds public authentication and organization state. Laravel owns the HTTP contract, authorization, and business rules. Controllers adapt requests, an Application command performs transactional organization creation, Policies authorize organization access, and API Resources shape responses. PostgreSQL stores users, recovery tokens, organizations, memberships, organization roles, permission definitions, and relational grants. Redis stores cache and server-side sessions. Mailpit catches development email.
 
 In local development Vite forwards API, Sanctum CSRF, and Fortify routes to Laravel. Sanctum reads the Laravel session. A production reverse proxy, TLS, deployment process, and scaling configuration remain outside this milestone.
 
-## Current structure and architecture groundwork
+## Implemented modular-monolith structure
 
-Phase 1.3 is implemented. Phase 1.3.5A established guardrails, B extracted listing/rename operations, C mechanically moved Organization into `App\Modules\Organization`, D centralized Organization authorization, and **E extracted the first pure Domain invariant and cleaned up Application failures**. **F mechanically moved Identity into `App\Modules\Identity`**. Platform health/readiness remain in conventional namespaces.
+Phase 1.3 is implemented. Phase 1.3.5A established guardrails, B extracted listing/rename operations, C mechanically moved Organization into `App\Modules\Organization`, D centralized Organization authorization, and **E extracted the first pure Domain invariant and cleaned up Application failures**. **F mechanically moved Identity into `App\Modules\Identity`**. G removed the unnecessary CreateOrganization dependency on Identity User, narrowed boundary rules and removed empty global business directories. Platform health/readiness remain in conventional namespaces.
 
 | Current module layer | Contents |
 | --- | --- |
@@ -35,7 +35,7 @@ OrganizationController delegates listing, creation, and rename; show authorizes 
 
 OrganizationAccess accepts actor and organization IDs. AccessDecision distinguishes ALLOWED, HIDDEN and FORBIDDEN and carries the existing application-owned denial message. Policies translate decisions through AccessResponse; Application writes throw AccessDenied on denial. A narrowly registered exception mapping in bootstrap/app.php reuses AccessResponse to produce Laravel AuthorizationException, preserving the existing HTTP renderer and 404/403 distinction. The evaluator never invokes Gate, Policies, ambient authentication, or HTTP helpers.
 
-Remaining narrow dependencies point from Organization to `Identity\Infrastructure\Eloquent\Models\User`: Organization::owner and OrganizationMembership::user persistence relationships, OrganizationPolicy actor types, CreateOrganization's explicit owner parameter (reads its key only), and the two Organization controllers' authenticated-user assertions. These six existing consumers are individually allowlisted, not permission for general cross-context access or Identity mutation. The unused User::organizationMemberships inverse was removed after a repository-wide usage search. Identity now has no Organization dependency. Organization Domain remains independent of Identity and Application remains independent of HTTP failures. Broader RBAC read-query extraction is deferred.
+Five narrow Organization adapters reference `Identity\Infrastructure\Eloquent\Models\User`: Organization::owner and OrganizationMembership::user persistence relationships, OrganizationPolicy actor type, and the two Organization controllers' authenticated-user assertions. CreateOrganization instead receives an explicit integer owner ID from the authenticated HTTP actor; it uses that ID for both organization ownership and atomic owner membership. Organization Application and Domain have no Identity dependency. The five existing adapters are individually allowlisted, not permission for general cross-context access or Identity mutation. The unused User::organizationMemberships inverse was removed in F. Identity has no Organization dependency. Broader RBAC read-query extraction is deferred.
 
 ## Identity module
 
@@ -49,6 +49,14 @@ Identity intentionally has Infrastructure and Presentation only; there is no art
 
 The SPA still uses CSRF cookies, Laravel session authentication, Redis sessions and Sanctum stateful access. Password reset, email verification, account-enumeration protection, resource fields and HTTP status codes are unchanged. No frontend, session/Sanctum/Fortify configuration, schema, migration, or dependency changes accompany this migration.
 
+## Application dependencies and entry points
+
+Organization Application has no Identity, HTTP, Gate or Policy imports. Its documented lightweight Eloquent dependencies are Organization (CreateOrganization, RenameOrganization, SaveRole, OrganizationAccess, ListOrganizations), OrganizationMembership (OrganizationAccess and AssignMembershipRole), and Role (SaveRole and AssignMembershipRole). ListOrganizations uses Eloquent Collection; CreateOrganization and SaveRole use Laravel DB transactions; SaveRole handles QueryException for the existing unique-name conflict. These are intentional current paths, not pure domain code or a generic repository layer. Revisit aggregate persistence when real business workflows justify it.
+
+CreateOrganization is a bootstrap command: the HTTP adapter supplies the authenticated actor ID, never a client owner field. RenameOrganization and SaveRole are public write use cases that recheck OrganizationAccess on direct invocation. AssignMembershipRole is an internal operation whose future caller must authorize membership administration; it has no route. ListOrganizations is a tenant-scoped Application query. Role and permission catalog reads remain small Policy-protected Eloquent/enum reads in the HTTP adapter, with `meta.can_manage` derived through Gate. No query bus or query classes are added for symmetry.
+
+Global `app/Http/Controllers/{Controller,HealthController}`, `app/Http/Resources/HealthResource`, `app/Providers/AppServiceProvider`, and `app/Services/ReadinessCheck` remain platform code. Central routes, database factories/seeders and migrations retain Laravel conventions. Empty global Actions, Models, Enums, Policies, Queries, Http/Requests and Http/Responses directories were removed.
+
 ## Domain invariant and Application failures
 
 RoleAssignmentRules requires exact equality between explicit membership and role organization ID strings and raises CrossOrganizationRoleAssignment on mismatch. It has no framework, persistence, or HTTP dependencies. Pure Unit tests run without Laravel or PostgreSQL. AssignMembershipRole remains internal: callers supply the already-loaded records and authorize membership administration; the operation invokes the rule and performs the existing idempotent pivot synchronization. It adds no actor authorization, lookup, endpoint, or transaction. PostgreSQL composite foreign keys remain the final integrity boundary, including when supplied model attributes are stale or spoofed. The pure check gives an early business failure; it cannot verify persisted state by itself.
@@ -57,7 +65,7 @@ SaveRole retains OrganizationAccess authorization, tenant-scoped row lookup, tra
 
 The existing PostgreSQL duplicate-name detection now raises RoleNameConflict after rollback. OrganizationFailureMapper in Presentation maps that specific failure to Laravel's existing 422 name-field validation response; it maps CrossOrganizationRoleAssignment to the existing role-field response. bootstrap/app.php registers the two exact mappings. Domain/Application failures contain no HTTP codes or JSON construction. Unknown HTTP keys remain Form Request errors, while a direct caller passing a string instead of an enum is a programming TypeError, not an HTTP validation result. Unrelated database failures still propagate normally. No generic exception hierarchy or repository was introduced.
 
-## Target architecture (partially implemented)
+## Architecture and dependency rules
 
 [ADR 0005](../decisions/0005-ddd-modular-monolith-architecture.md) approves a DDD-oriented modular monolith with a pragmatic Application layer and CQRS-lite:
 
@@ -68,7 +76,7 @@ The existing PostgreSQL duplicate-name detection now raises RoleNameConflict aft
 - Controllers invoke direct write use cases/queries. Reads may use efficient Eloquent/query-builder/SQL. No buses, event sourcing, separate read database, or new domain events.
 - Policies are Laravel adapters over the shared Organization access evaluator. Explicit tenant scope, constraints, binding, authorization ordering, and transaction semantics remain authoritative.
 
-Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. The final cleanup/enforcement checkpoint remains unstarted and requires separate authorization.
+Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. Phase 1.3.5 is complete locally, awaiting review. Phase 1.4 remains unimplemented.
 
 ## HTTP contract
 
@@ -112,7 +120,7 @@ The Roles & Permissions SPA route is `/app/organizations/{organizationId}/roles`
 
 Pest tests cover authentication, transaction rollback, PostgreSQL constraints, owner authorization, cross-tenant isolation, permission unions, revocation, RBAC constraints, and migration compatibility. Vitest covers client state and routing. Playwright exercises authentication, email verification, onboarding, refresh, a second user's access denial, and role creation/editing with persistence after refresh. Pint, Larastan, ESLint, Prettier, TypeScript checking, audits, and production build are local quality gates.
 
-The Architecture suite runs with backend quality without booting Laravel. Current controller/dependency/global-state checks are active; Organization Domain/Application checks now run with no skips; model/ambient-context guards include both modules. Identity cannot depend on Organization; Organization can reference only the User persistence type through six explicitly listed existing consumers. They complement, rather than prove, authorization and tenant isolation. Characterization covers application-owned errors, denial-before-validation ordering, resource status/shape, scoped binding, policy/factory/Fortify resolution, and unverified `/me`. See [Phase 1.3.5 validation](../phases/phase-01-ddd-architecture-validation.md) for observed results and limitations.
+The Architecture suite runs with backend quality without booting Laravel. Current controller/dependency/global-state checks are active; Organization Domain/Application checks now run with no skips; model/ambient-context guards include both modules. Identity cannot depend on Organization; Organization can reference only the User persistence type through five explicitly listed existing adapters. They complement, rather than prove, authorization and tenant isolation. Characterization covers application-owned errors, denial-before-validation ordering, resource status/shape, scoped binding, policy/factory/Fortify resolution, and unverified `/me`. See [Phase 1.3.5 validation](../phases/phase-01-ddd-architecture-validation.md) for observed results and limitations.
 
 ## Deferred compatibility concerns
 

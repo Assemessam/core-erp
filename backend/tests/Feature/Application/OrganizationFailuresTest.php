@@ -12,8 +12,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 it('assigns within a tenant and rejects incompatible records before creating a pivot', function () {
-    $organization = app(CreateOrganization::class)->handle(User::factory()->create(), 'Local');
-    $other = app(CreateOrganization::class)->handle(User::factory()->create(), 'Other');
+    $organization = app(CreateOrganization::class)->handle(User::factory()->create()->id, 'Local');
+    $other = app(CreateOrganization::class)->handle(User::factory()->create()->id, 'Other');
     $membership = $organization->memberships()->sole();
     $local = $organization->roles()->create(['name' => 'Local']);
     $foreign = $other->roles()->create(['name' => 'Foreign']);
@@ -33,7 +33,7 @@ it('assigns within a tenant and rejects incompatible records before creating a p
 
 it('exposes a specific application conflict for PostgreSQL duplicate names without partial mutation', function (bool $update) {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Conflict');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Conflict');
     $save = app(SaveRole::class);
     $save->handle($owner->id, $organization, null, 'Existing');
     $role = $save->handle($owner->id, $organization, null, 'Stable', PermissionKey::RolesView);
@@ -50,7 +50,7 @@ it('exposes a specific application conflict for PostgreSQL duplicate names witho
 
 it('requires enum instances for direct writes and rejects invalid permission inputs without mutation', function (mixed $invalid) {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'Typed permissions');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'Typed permissions');
     $save = app(SaveRole::class);
     $role = $save->handle($owner->id, $organization, null, 'Stable', PermissionKey::RolesView);
 
@@ -70,7 +70,7 @@ it('requires enum instances for direct writes and rejects invalid permission inp
 
 it('maps a database name conflict to the unchanged HTTP field error', function () {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'HTTP conflict');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'HTTP conflict');
     app(SaveRole::class)->handle($owner->id, $organization, null, 'Existing');
     // Test-only adapter route bypasses the preflight name validator so the real DB conflict is reached.
     Route::post('/api/test-role-conflict', fn () => app(SaveRole::class)->handle($owner->id, $organization, null, ' existing '));
@@ -81,8 +81,8 @@ it('maps a database name conflict to the unchanged HTTP field error', function (
 });
 
 it('maps the domain assignment failure to its existing field validation representation', function () {
-    $organization = app(CreateOrganization::class)->handle(User::factory()->create(), 'Local');
-    $other = app(CreateOrganization::class)->handle(User::factory()->create(), 'Other');
+    $organization = app(CreateOrganization::class)->handle(User::factory()->create()->id, 'Local');
+    $other = app(CreateOrganization::class)->handle(User::factory()->create()->id, 'Other');
     $membership = $organization->memberships()->sole();
     $foreign = $other->roles()->create(['name' => 'Foreign']);
     // Assignment remains internal; no production membership-management endpoint is introduced.
@@ -95,7 +95,7 @@ it('maps the domain assignment failure to its existing field validation represen
 
 it('rejects unknown HTTP permission keys with the existing validation envelope before mutation', function () {
     $owner = User::factory()->create();
-    $organization = app(CreateOrganization::class)->handle($owner, 'HTTP validation');
+    $organization = app(CreateOrganization::class)->handle($owner->id, 'HTTP validation');
     $message = 'The selected permissions.0 is invalid.';
     $this->actingAs($owner)->postJson('/api/v1/organizations/'.$organization->id.'/roles', [
         'name' => 'Invalid', 'permissions' => ['unknown'],

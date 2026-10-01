@@ -15,14 +15,15 @@
 
 ## Architecture guardrails
 
-Follow [ADR 0005](docs/decisions/0005-ddd-modular-monolith-architecture.md). Phase 1.3.5A establishes guardrails only: existing namespaces remain until a separately authorized migration checkpoint. Apply these rules progressively without expanding milestone scope.
+Follow [ADR 0005](docs/decisions/0005-ddd-modular-monolith-architecture.md). Identity and Organization are the current bounded contexts; keep platform health/readiness outside business modules.
 
 - New business functionality belongs to its owning module; never create future modules before their milestone. Identity owns authentication; Organization owns memberships and tenant RBAC together.
 - Domain code must not depend on Laravel, Eloquent, HTTP, Application, or Infrastructure.
 - Put mutations behind Application use cases. Controllers adapt HTTP input, invoke Application, and return representations; do not add business database mutations or transactions to controllers.
 - Same-module Eloquent is allowed in documented lightweight Application paths. Introduce repositories only for meaningful aggregate persistence; queries may use efficient Eloquent/query-builder/SQL reads.
 - Pass actor and organization context explicitly; never use ambient/global tenant state. Tenant scope applies to reads, writes, reports, jobs, exports, and cache keys.
-- Keep Laravel Policies; reuse centralized access decisions as they are extracted, rather than duplicating authorization rules. Keep domain invariants separate from actor authorization.
+- Keep Laravel Policies as adapters over OrganizationAccess; direct authorized write use cases must also check access. Keep domain invariants separate from actor authorization.
+- Organization Application must not depend on Identity Infrastructure; pass authenticated user IDs from trusted HTTP adapters. Identity must not depend on Organization. Organization Eloquent relationships, its Policy, and HTTP actor assertions may reference Identity User where required by Laravel integration.
 - Transactions belong in Application orchestration. Do not hide required workflows in model observers.
 - Do not introduce domain events without a real consumer, or generic Shared utilities without demonstrated shared semantics.
 - Preserve historical migrations and existing HTTP/API behavior during architectural refactors. Add architecture and security tests with boundary changes; static checks do not prove tenant isolation.
