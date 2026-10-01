@@ -2,6 +2,8 @@
 
 namespace App\Modules\Organization\Application\Commands;
 
+use App\Modules\Audit\Application\Contracts\AuditRecorder;
+use App\Modules\Organization\Application\Auditing\OrganizationAuditEntries;
 use App\Modules\Organization\Application\Authorization\OrganizationAccess;
 use App\Modules\Organization\Application\Operations\ResolveOrganizationRoles;
 use App\Modules\Organization\Domain\Invitations\InvitationRejected;
@@ -9,15 +11,16 @@ use App\Modules\Organization\Domain\Invitations\InvitationRules;
 use App\Modules\Organization\Domain\Invitations\InvitationState;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\OrganizationInvitation;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Role;
 use App\Modules\Organization\Infrastructure\Mail\InvitationDelivery;
 use Illuminate\Support\Facades\DB;
 
 class CreateInvitation
 {
-    public function __construct(private readonly OrganizationAccess $access, private readonly ResolveOrganizationRoles $roles, private readonly InvitationDelivery $delivery) {}
+    public function __construct(private readonly OrganizationAccess $access, private readonly ResolveOrganizationRoles $roles, private readonly InvitationDelivery $delivery, private readonly AuditRecorder $audit, private readonly OrganizationAuditEntries $entries) {}
 
     /** @param list<string> $roleIds */
-    public function handle(int $actorUserId, string $organizationId, string $email, array $roleIds): OrganizationInvitation
+    public function handle(int $actorUserId, string $organizationId, #[\SensitiveParameter] string $email, array $roleIds): OrganizationInvitation
     {
         $this->access->inviteMembers($actorUserId, $organizationId)->requireAllowed();
 
@@ -50,7 +53,18 @@ class CreateInvitation
             }
             DB::afterCommit(fn () => $this->delivery->send($invitation, $organization->name, $token));
 
-            return $invitation->load('roles.permissions');
+            // Project persisted expiration precision/timezone, not the transient creation value.
+            $invitation->refresh()->load('roles.permissions');
+            if ($previous !== null) {
+                $this->audit->record($this->entries->invitationRevoked($organization->id, $actorUserId, $previous->id, $invitation->id));
+            }
+            $persistedRoleIds = array_values($invitation->roles->map(fn (Role $role): string => $role->id)->all());
+            $this->audit->record($this->entries->invitationCreated(
+                $organization->id, $actorUserId, $invitation->id,
+                $invitation->expires_at->utc()->format('Y-m-d\\TH:i:s.u\\Z'), $persistedRoleIds,
+            ));
+
+            return $invitation;
         });
     }
 }

@@ -1,13 +1,13 @@
 # ADR 0007: Tenant-scoped audit recording with transactional, append-only persistence
 
-- Status: Accepted design; Phase 1.5B approved and committed; Phase 1.5C Organization/RBAC integration complete locally, awaiting review
+- Status: Accepted design; Phase 1.5B/C approved and committed; Phase 1.5D Invitation/Membership integration complete locally, awaiting review
 - Date: 2026-10-01
 
 ## Context and checkpoint boundary
 
 CoreERP's Identity and Organization contexts follow ADR 0005. Organization owns memberships, tenant RBAC and invitations under ADR 0006. Sensitive Organization mutations need attributable history; future approved business modules will need the same recording capability. Technical Laravel logs do not provide that history.
 
-Checkpoint B established the recording contract, immutable input data, initial vocabulary, strict payload validation, PostgreSQL storage/protection, explicit provider wiring and tests. Checkpoint C instruments only CreateOrganization, RenameOrganization and SaveRole, emitting organization.created, organization.renamed, role.created and meaningful role.updated facts. Invitation/member lifecycle integration remains pending for D. There is no audit permission, history query, HTTP route, Resource, Policy or frontend. Phase 1.5 is not complete. Later checkpoints require separate authorization.
+Checkpoint B established the recording contract, immutable input data, initial vocabulary, strict payload validation, PostgreSQL storage/protection, explicit provider wiring and tests. Checkpoint C instruments only CreateOrganization, RenameOrganization and SaveRole, emitting organization.created, organization.renamed, role.created and meaningful role.updated facts. Checkpoint D instruments the seven invitation/member lifecycle commands, completing the eleven approved mutation facts. There is no audit permission, history query, HTTP route, Resource, Policy or frontend. Phase 1.5 is not complete. Later checkpoints require separate authorization.
 
 ## Ownership and layers
 
@@ -46,7 +46,7 @@ Audit imports no Organization or Identity classes. Table foreign keys are intent
 
 Producers build deliberate, named module-owned projections from scoped persisted records. The recorder validates shape and vocabulary, not actor authority or another module's subject existence/ownership. Those checks remain in the initiating use case. No producers were added in B.
 
-Checkpoint C uses one model-free Organization Application factory, `Auditing/OrganizationAuditEntries`. Its four named methods take explicit scalar business values and permission-key lists, never models, requests or arbitrary controller arrays. It normalizes permissions to sorted unique stable strings and returns null for a role update with no changed fields. Only the factory imports AuditActor, AuditEntry, AuditSubject, AuditAction and AuditSubjectType; the three commands import AuditRecorder. All eight imports are confined to the public Contracts/Data/Vocabulary namespaces. No Organization Domain, Infrastructure or Presentation code imports Audit.
+Organization uses one model-free Application factory, `Auditing/OrganizationAuditEntries`. C introduced four named methods; D adds invitationCreated, invitationRevoked (including optional replacement ID), invitationAccepted, membershipRolesChanged, membershipSuspended, membershipActivated and membershipRemoved. Its explicit scalar business values and permission/role-ID lists never contain models, requests, emails or invitation credentials. It normalizes lists to sorted unique stable strings and returns null for unchanged role/assignment sets. Only the factory imports AuditActor, AuditEntry, AuditSubject, AuditAction and AuditSubjectType; all ten write commands import AuditRecorder. Fifteen imports / six distinct public types remain confined to Contracts/Data/Vocabulary. No Organization Domain, Infrastructure or Presentation code imports Audit.
 
 ## Transaction and failure semantics
 
@@ -60,7 +60,11 @@ CreateOrganization records after organization and owner membership insertion in 
 
 SaveRole retains its transaction, scoped role row lock, typed PermissionKey inputs, name trimming, unique-name conflict and HTTP 422 translation. Creation records after grants are synchronized. Update reads the locked persisted name/permissions, then records only changed fields after persistence. Equivalent normalized names/permission sets emit no fact. Audit failure restores a created role/grants or the prior name/grants; duplicate conflicts leave no successful fact. These facts describe explicit command workflows, not model observers or internal pivot writes.
 
-Existing lifecycle/invitation transactions remain Application-owned and uninstrumented in C. Future invitation delivery stays after commit; an invitation-created fact will not assert successful SMTP delivery. A later mail failure must leave the committed invitation and audit fact intact.
+D retains the existing organization-first, then invitation/membership row locks and reauthorization. CreateInvitation records persisted pending state, freshly reloaded database expiration in canonical UTC and actual persisted invitation grants. Reinvite revokes the old credential and creates its replacement, then records old invitation.revoked (reason=replaced plus final replacement ID) followed by new invitation.created in the same transaction. Neither event can survive failure of the other. RevokeInvitation records only pending-to-revoked; accepted/already-revoked no-ops remain successful without new history.
+
+AcceptInvitation retains verified matching identity, credential/state/expiration checks, unique membership and replay protection. It records one invitation.accepted after membership/grants persist and invitation state becomes accepted, using the accepting actor and actual membership/user/assigned-role IDs. SyncMembershipRoles compares fresh persisted role sets before/after synchronization. Suspend/Activate skip repeated status no-ops while preserving owner protection and retained grants. RemoveMembership captures locked user/status/roles before deletion, then records after successful deletion; history survives because the subject has no FK. Internal AssignMembershipRole, ResolveOrganizationRoles and LockManagedMembership do not emit facts.
+
+Invitation mail callback registration remains before recording inside the transaction. Tests prove Laravel discards it on rollback, including a failed second replacement audit insert and a later successful transaction. Email delivery stays synchronous after physical commit; invitation.created asserts persisted issuance, not SMTP success. A real delivery adapter with a failing effective SMTP transport proves existing safe HTTP 503 leaves invitation and audit history committed. No delivery event, queue or redesign is introduced.
 
 The physical recording clock is not commit order. ULIDs and timestamps do not globally serialize concurrent business commands. There is no global audit write lock.
 
@@ -71,7 +75,7 @@ Every row has `organization_id NOT NULL`. Global authentication or hypothetical 
 - User actor: positive integer `actor_user_id`, type `user`.
 - System actor: null user ID, type `system`.
 
-Application and PostgreSQL enforce the combination independently. Existing future Organization producers will use authenticated user actors; schema support for system attribution grants no new business authorization bypass.
+Application and PostgreSQL enforce the combination independently. Current Organization producers use authenticated user actors; schema support for system attribution grants no new business authorization bypass.
 
 No actor name/email snapshot is stored. Historical actor attribution is the stable user ID; a later UI can initially display User #ID. No current Identity projection or polymorphic actor machinery is required. Identifiers remain potentially sensitive data even without duplicated email addresses.
 
@@ -115,7 +119,7 @@ Names are nonblank strings, bounded to the existing organization 255/role 80 cha
 
 Only payload version 1 is accepted now. Evolving payloads require an explicit version/schema change and tests; existing stored records must remain interpretable.
 
-Reinvite will eventually record the old invitation's revocation and the new invitation's creation atomically, not a redundant third event. Acceptance includes membership/bootstrap grants; internal pivot operations should not create duplicate facts. Derived expiration, low-value reads, failed commands, fixture/migration writes and global auth events have no records here. Existing history is not backfilled with invented observations.
+Reinvite records the old invitation's revocation and the new invitation's creation atomically, not a redundant third event. Acceptance includes membership/bootstrap grants; internal pivot operations should not create duplicate facts. Derived expiration, low-value reads, failed commands, fixture/migration writes and global auth events have no records here. Existing history is not backfilled with invented observations.
 
 ## Secret rejection and payload bounds
 
@@ -174,8 +178,12 @@ No test-isolation helper, trigger disabling, audit DELETE cleanup or committed a
 
 Focused C Application tests assert exact persisted fact structures, trusted actor/subject identity, fresh locked before values, changed-field-only payloads, no-ops, duplicate failures and supplied-model return behavior. For each of the four paths, a narrow test-only recorder first proves writes precede recording and then throws; a second mode delegates to the real recorder, verifies a successful insert and deliberately fails before transaction completion. Both modes prove business rows/grants and audit inserts roll back together. Existing authorization and cross-tenant suites remain active. Backend database suites stay sequential and separate from browser writes.
 
-In D, committed invitation acceptance will create immutable history. Revisit the concurrency fixture cleanup then; use a defensive dedicated disposable test database if required, with explicit testing environment and dedicated naming checks that refuse development/production databases.
+D replaces committed business-row cleanup with test-only DisposableConcurrencyDatabase. phpunit.xml explicitly sets COREERP_CONCURRENCY_TEST_DATABASE=coreerp_concurrency_test. The helper requires the testing environment, exactly that fixed name, a distinct nonempty configured and actual application database, idle default pgsql and no URL override. A separate postgres administrative connection creates only a previously absent target; existing databases are never reused or dropped. Only a database successfully created by that invocation is dropped in finally after worker exit. Original connection config is restored. Independent workers also require testing, fixed target and a distinct explicit application database. No trigger/FK/recorder bypass or row-deletion cleanup exists.
+
+The genuine concurrency test now uses audited organization creation, observes both independent acceptance sessions waiting on the tenant lock and proves exactly one membership, accepted invitation and invitation.accepted row. The same disposable scope supports physical mail/commit regression tests. Unit tests reject unsafe environments/names/SQL identifiers/default-target collisions; an Integration failure test proves database drop and connection restoration. Run these suites sequentially: the fixed dedicated name intentionally rejects overlapping attempts. A killed process may leave the disposable database behind; automatic reuse/deletion is refused and requires manual verification. See the D validation record for commands and privileges.
+
+D Application tests assert every new fact, sorted persisted role sets, fresh-state/no-op behavior, trusted/delegated attribution, rejection without successful facts and rollback for issuance, both replacement inserts, revocation, acceptance, sync, suspension, activation and removal. A real acceptance audit insert followed by deliberate failure proves membership/grants/state/history atomicity. Exact invitation payload comparisons plus boolean credential/email/URL exclusion checks avoid printing sensitive values on assertion failure. Invitation email/accepting-email command parameters now carry SensitiveParameter alongside the existing acceptance token protection; audit-failure trace tests explicitly enable PHP argument traces and prove email/token/hash exclusion. Existing F1 effective-transport security tests remain unchanged.
 
 Architecture checks enforce framework-free Audit Application, no Audit -> Organization/Identity imports, no Organization Domain -> Audit, an explicit Organization-to-Audit public namespace allowlist, no Organization delivery/infrastructure audit orchestration, private implementation isolation, no controller writes/transactions and caller-owned recorder transaction control. Runtime tests supplement static rules.
 
-Approved later scope, not implemented: invitation/membership producers; audit.view and authorized tenant history with a narrow Audit-owned authorization port implemented by Organization; newest-first created_at/id cursor pagination; minimal action/subject filters; safe Resource; view-local Vue Audit Trail and browser flow. C adds no migrations, permissions, API or frontend changes. No future business modules are created now.
+Approved later scope, not implemented: audit.view and authorized tenant history with a narrow Audit-owned authorization port implemented by Organization; newest-first created_at/id cursor pagination; minimal action/subject filters; safe Resource; view-local Vue Audit Trail and browser flow. C/D add no migrations, permissions, API or frontend changes. No future business modules are created now.

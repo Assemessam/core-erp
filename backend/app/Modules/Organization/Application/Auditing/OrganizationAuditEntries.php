@@ -66,6 +66,97 @@ final class OrganizationAuditEntries
         );
     }
 
+    /** @param list<string> $roleIds */
+    public function invitationCreated(string $organizationId, int $actorUserId, string $invitationId, string $expiresAt, array $roleIds): AuditEntry
+    {
+        return new AuditEntry(
+            $organizationId, AuditActor::user($actorUserId), AuditAction::InvitationCreated,
+            new AuditSubject(AuditSubjectType::Invitation, $invitationId),
+            null, ['state' => 'pending', 'expires_at' => $expiresAt, 'role_ids' => $this->roleIds($roleIds)],
+        );
+    }
+
+    public function invitationRevoked(string $organizationId, int $actorUserId, string $invitationId, ?string $replacementInvitationId = null): AuditEntry
+    {
+        $after = ['state' => 'revoked'];
+        if ($replacementInvitationId !== null) {
+            $after['replacement_invitation_id'] = $replacementInvitationId;
+            $after['reason'] = 'replaced';
+        }
+
+        return new AuditEntry(
+            $organizationId, AuditActor::user($actorUserId), AuditAction::InvitationRevoked,
+            new AuditSubject(AuditSubjectType::Invitation, $invitationId), ['state' => 'pending'], $after,
+        );
+    }
+
+    /** @param list<string> $roleIds */
+    public function invitationAccepted(string $organizationId, int $actorUserId, string $invitationId, int $membershipId, int $userId, array $roleIds): AuditEntry
+    {
+        return new AuditEntry(
+            $organizationId, AuditActor::user($actorUserId), AuditAction::InvitationAccepted,
+            new AuditSubject(AuditSubjectType::Invitation, $invitationId), ['state' => 'pending'],
+            ['state' => 'accepted', 'membership_id' => $membershipId, 'user_id' => $userId, 'role_ids' => $this->roleIds($roleIds)],
+        );
+    }
+
+    /** @param list<string> $beforeRoleIds
+     * @param  list<string>  $afterRoleIds
+     */
+    public function membershipRolesChanged(string $organizationId, int $actorUserId, int $membershipId, int $userId, array $beforeRoleIds, array $afterRoleIds): ?AuditEntry
+    {
+        $beforeRoleIds = $this->roleIds($beforeRoleIds);
+        $afterRoleIds = $this->roleIds($afterRoleIds);
+        if ($beforeRoleIds === $afterRoleIds) {
+            return null;
+        }
+
+        return new AuditEntry(
+            $organizationId, AuditActor::user($actorUserId), AuditAction::MembershipRolesChanged,
+            new AuditSubject(AuditSubjectType::Membership, $membershipId),
+            ['user_id' => $userId, 'role_ids' => $beforeRoleIds], ['user_id' => $userId, 'role_ids' => $afterRoleIds],
+        );
+    }
+
+    public function membershipSuspended(string $organizationId, int $actorUserId, int $membershipId, int $userId): AuditEntry
+    {
+        return new AuditEntry(
+            $organizationId, AuditActor::user($actorUserId), AuditAction::MembershipSuspended,
+            new AuditSubject(AuditSubjectType::Membership, $membershipId),
+            ['user_id' => $userId, 'status' => 'active'], ['user_id' => $userId, 'status' => 'suspended'],
+        );
+    }
+
+    public function membershipActivated(string $organizationId, int $actorUserId, int $membershipId, int $userId): AuditEntry
+    {
+        return new AuditEntry(
+            $organizationId, AuditActor::user($actorUserId), AuditAction::MembershipActivated,
+            new AuditSubject(AuditSubjectType::Membership, $membershipId),
+            ['user_id' => $userId, 'status' => 'suspended'], ['user_id' => $userId, 'status' => 'active'],
+        );
+    }
+
+    /** @param list<string> $roleIds */
+    public function membershipRemoved(string $organizationId, int $actorUserId, int $membershipId, int $userId, string $status, array $roleIds): AuditEntry
+    {
+        return new AuditEntry(
+            $organizationId, AuditActor::user($actorUserId), AuditAction::MembershipRemoved,
+            new AuditSubject(AuditSubjectType::Membership, $membershipId),
+            ['user_id' => $userId, 'status' => $status, 'role_ids' => $this->roleIds($roleIds)], null,
+        );
+    }
+
+    /** @param list<string> $roleIds
+     * @return list<string>
+     */
+    private function roleIds(array $roleIds): array
+    {
+        $roleIds = array_values(array_unique($roleIds));
+        sort($roleIds, SORT_STRING);
+
+        return $roleIds;
+    }
+
     /** @param list<string> $permissions
      * @return list<string>
      */

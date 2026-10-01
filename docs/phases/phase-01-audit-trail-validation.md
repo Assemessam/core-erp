@@ -1,6 +1,6 @@
 # Phase 1.5 — Audit Trail validation
 
-Current checkpoint: **1.5C Organization/RBAC integration complete locally, awaiting review**. B is approved and committed as `2675976`. The B results below are historical; the appended C record supersedes its integration status. Phase 1.5 is not complete and D has not begun.
+Current checkpoint: **1.5D Invitation & Membership Lifecycle integration complete locally, awaiting review**. B/C are approved and committed as `2675976` / `c040582`. B/C results below are historical; the appended D record supersedes their integration status. Phase 1.5 is not complete and E has not begun.
 
 ## Phase 1.5B — Audit Persistence & Safety Contracts (historical)
 
@@ -138,7 +138,7 @@ Recommendation for separately authorized 1.5C: add module-owned Organization pro
  5 files changed, 51 insertions(+), 5 deletions(-)
 ```
 
-## Phase 1.5C — Organization & RBAC Audit Integration
+## Phase 1.5C — Organization & RBAC Audit Integration (historical)
 
 Date: 2026-10-01. Status: complete locally, awaiting review. Started clean on `feature/audit-trail`, with approved B commit `2675976 feat: add immutable audit persistence foundation`. No staging, commit, push, branch change, reset or discard. Only C is implemented; D and later API/UI checkpoints remain pending.
 
@@ -235,3 +235,100 @@ Review the fresh locked-state snapshots, rename's post-success supplied-instance
 Limitations remain: privileged SQL can bypass command instrumentation or fabricate facts; administrators can bypass storage protections; free-text names cannot universally detect embedded secrets; production privilege separation/load/deployment/retention are unverified. No read API/history-access claim, audit.view, frontend history or production deployment is included. Existing sequential database constraints and deferred operational/UX/CORS issues remain.
 
 Recommend separately authorized **1.5D Invitation & Membership Lifecycle audit integration**: extend deliberate module-owned projections and existing command transactions, preserve credential/email exclusions and mail-after-commit semantics, prove rollback/no-op/reinvite facts, and address committed invitation concurrency test isolation before auditing acceptance. **Stop here; D has not begun.**
+
+## Phase 1.5D — Invitation & Membership Lifecycle Audit Integration
+
+Date: 2026-10-01. Status: complete locally, awaiting review. Started clean on `feature/audit-trail`, approved C commit `c040582 feat: audit organization and RBAC mutations`. Nothing staged/committed/pushed; no branch change/reset/discard. Only D is implemented. E and the history UI remain pending; Phase 1.5 is not complete.
+
+### Inspection and baseline
+
+Read AGENTS.md, ADRs 0005/0006/0007 and this record. Inspected Audit inputs/schemas/recorder, OrganizationAuditEntries, all seven lifecycle commands, AssignMembershipRole/ResolveOrganizationRoles/LockManagedMembership, Domain rules, InvitationDelivery/F1 tests, OrganizationUsers tests/constraints, raw fixtures and the genuine committed acceptance test. Existing Compose services were healthy. Baseline `docker compose exec -T backend composer quality`: **315 passed / 1,895 assertions**, Pint 137 files and Larastan level 8 clean.
+
+### Implemented facts and public dependency inventory
+
+The existing model-free OrganizationAuditEntries now has seven additional named methods: invitationCreated, invitationRevoked, invitationAccepted, membershipRolesChanged, membershipSuspended, membershipActivated and membershipRemoved. Optional replacement ID adds only the approved paired reason=replaced/replacement_invitation_id fields. Methods take explicit scalar facts and role-ID lists; none accept models, requests, emails, credentials or arbitrary payload arrays. Role sets become sorted unique stable strings; equivalent before/after membership role sets return null.
+
+All Organization-to-Audit imports were inspected with `rg -n '^use App\\Modules\\Audit' backend/app/Modules/Organization`. Ten commands (the three C commands plus seven D commands) import only Contracts/AuditRecorder. The one factory imports Data/AuditActor, AuditEntry, AuditSubject and Vocabulary/AuditAction, AuditSubjectType. **Fifteen imports / six distinct public types**. No Audit Infrastructure, Validation, Exceptions, Presentation or direct audit_events access in Organization production. No Audit module production change; architecture allowlists remain unchanged.
+
+All events persist organization_id, user actor type/trusted explicit user ID, stable action, correct subject type/persisted ID, exact snapshots, payload_version=1, generated ULID and database-created timestamp. D snapshots are:
+
+| Action | Before | After |
+| --- | --- | --- |
+| invitation.created | null | state=pending, expires_at in canonical UTC with six fractional digits, persisted role_ids |
+| invitation.revoked | state=pending | state=revoked; replacement only adds replacement_invitation_id and reason=replaced |
+| invitation.accepted | state=pending | state=accepted, persisted membership_id, accepting user_id, actual assigned role_ids |
+| membership.roles_changed | user_id, old persisted role_ids | same user_id, new persisted role_ids |
+| membership.suspended | user_id, status=active | same user_id, status=suspended |
+| membership.activated | user_id, status=suspended | same user_id, status=active |
+| membership.removed | user_id, persisted status, persisted role_ids | null |
+
+All role lists are sorted and unique. All eleven mutation facts are now integrated: organization.created/renamed, role.created/updated, invitation.created/revoked/accepted and membership.roles_changed/suspended/activated/removed. No independent grant/bootstrap events, attempted/expiration events or global authentication instrumentation.
+
+### Transactional orchestration, fresh state and no-ops
+
+CreateInvitation preserves authorization/reauthorization, organization lock, email/member rules, secure credential rotation, role resolution/grants, expiration and synchronous after-commit SMTP delivery. Recording occurs after invitation/grants persist, before commit. It refreshes the invitation before projection so audit expiration describes actual PostgreSQL/Laravel stored precision and timezone rather than transient microseconds. Reinvite first revokes the old credential and creates the new invitation; with both IDs known it records old revocation then new creation in one transaction, without a third event.
+
+RevokeInvitation records actual pending-to-revoked only; accepted/already-revoked remain no-ops. Acceptance preserves token, verified matching email, fresh pending/unexpired state, organization-first/invitation locks, unique membership, grants, accepted state and replay denial. It records exactly one fact after all writes, using the accepting actor and actual assigned grants. Role sync reads the locked membership's persisted roles before mutation and actual roles afterward. Status commands read locked status and skip repeats without weakening owner protection. Removal captures locked user/status/roles before deletion and records after deletion succeeds; history intentionally survives the deleted subject.
+
+Stale-state coverage includes invitation state, cached membership roles and membership status changed independently in PostgreSQL. Existing direct authorization, HTTP identity spoofing, owner protection and cross-tenant tests remain active. Explicit audit actors are proven despite unrelated ambient sessions; delegated issuance/revocation use the caller, not invitation inviter/member identity.
+
+### Rollback and mail/privacy proofs
+
+Explicit failures cover new issuance, each replacement audit insert, revoke, acceptance, complete role sync, suspension, activation and removal. Rollback restores invitation/grants/hash persistence, old pending credential, membership/grants/accepted state, previous complete role set, status/access or deleted membership/pivots. Failed replacement's old credential is demonstrated still acceptable. No successful fact remains from failure. A real acceptance audit INSERT followed by deliberate exception rolls membership/grants/state/history back together. Production exceptions propagate; no recorder bypass, best-effort catch, observer, queue or afterCommit audit write exists.
+
+Mail callback registration remains before audit insertion. Feature and physical-commit Integration tests prove rollback discards it, including failed second replacement insertion, and a later successful transaction does not deliver abandoned mail. A real InvitationDelivery using a failing effective SMTP transport confirms delivery begins only with transaction level zero/PDO out of transaction and audit persisted. HTTP remains the existing safe 503; invitation and audit remain committed. invitation.created asserts issuance, not delivery; no mail event is added. F1 tests run unchanged.
+
+Exact schema comparisons plus a scan across replacement/create/accept payload JSON prove no plaintext token, token hash, invited/actor email or invitation URL. Assertions use boolean comparisons to avoid sensitive actual-value dumps. Invited/accepting email arguments now have SensitiveParameter protection; the existing token annotation remains. With zend.exception_ignore_args=0, issuance and acceptance audit-failure traces are proven free of email/token/hash, with fixed message/no previous exception. No validator/schema weakening or delivery-security change.
+
+### Committed concurrency and defensive database isolation
+
+Audited acceptance makes organization/user deletion cleanup invalid. The real two-process test now runs inside test-only DisposableConcurrencyDatabase, uses audited organization creation, observes both independent PostgreSQL sessions waiting on the tenant lock and verifies one success, one accepted replay rejection, one membership, accepted invitation and exactly one invitation.accepted fact with exact attribution/snapshots/version/time. It retains genuine competition, not sequential replay.
+
+phpunit.xml explicitly forces COREERP_CONCURRENCY_TEST_DATABASE=coreerp_concurrency_test. The helper requires testing environment, that exact fixed name, a nonempty distinct configured and actual application database, idle default pgsql, no URL override and no pre-existing reserved admin configuration. A separate administrative connection to postgres creates only an absent target. It refuses existing targets and never drops them; only its successfully created target is dropped as a whole in finally after workers exit, restoring original configuration. Workers require testing, fixed target and distinct explicit application database. No arbitrary destructive target, FK/trigger disabling, testing audit bypass or audit-row deletion.
+
+Nine unit cases cover allowed/unsafe names, non-testing environment, development/production names, empty/default collisions and SQL identifiers. A failure Integration test proves drop and config restoration when its callback throws. Concurrency plus isolation checks pass **11 cases / 42 assertions**. Normal runs leave no disposable DB; final pg_database count is zero. This scope also supports three physical mail/commit tests. Existing Feature rollback strategy/raw integrity fixtures remain unchanged; committed immutable fixtures do not accumulate.
+
+Run sequentially from repository root:
+
+```bash
+docker compose exec -T backend php vendor/bin/pest tests/Integration/InvitationConcurrencyTest.php --compact
+docker compose exec -T backend php vendor/bin/pest tests/Integration/InvitationAuditCommitTest.php tests/Integration/DisposableConcurrencyDatabaseTest.php tests/Unit/DisposableConcurrencyDatabaseTest.php --compact
+```
+
+The configured PostgreSQL test role needs CREATE DATABASE and ownership/drop rights for the dedicated target plus access to the postgres maintenance database; Compose development credentials provide these. Do not run these suites in parallel. A killed process can leave the dedicated target behind; the helper refuses automatic reuse/drop, so verify ownership/purpose before manual recovery. No development/production database deletion is authorized by this helper.
+
+### Documentation, changed files and final checks
+
+Updated ADR 0007, architecture overview, roadmap, README and this validation record to describe complete mutation recording through D and pending E/API/UI. Architecture source did not need changes: the existing public namespace boundary covers all new imports without broadening. No historical/new migration, Audit schema/validator/recorder, OrganizationAccess, Domain rule, internal operation, HTTP adapter, InvitationDelivery/F1 implementation, frontend source, dependency lock or environment file change.
+
+Modified eight Organization production files (factory plus seven commands), phpunit.xml, concurrency test and worker, and five documentation files. Created seven test/support files: InvitationAuditIntegrationTest, MembershipAuditIntegrationTest, InvitationAuditCommitTest, DisposableConcurrencyDatabase (support), its Unit/Integration tests and LifecycleAuditAssertions. Existing command-based setup stays audited; the raw fixture helper is not broadened or used as a production bypass.
+
+| Command | Final result |
+| --- | --- |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Application/Auditing/InvitationAuditIntegrationTest.php tests/Feature/Application/Auditing/MembershipAuditIntegrationTest.php tests/Integration/InvitationAuditCommitTest.php --compact` | **42 passed / 391 assertions** |
+| `docker compose exec -T backend php vendor/bin/pest tests/Integration/InvitationConcurrencyTest.php tests/Integration/DisposableConcurrencyDatabaseTest.php tests/Unit/DisposableConcurrencyDatabaseTest.php --compact` | **11 passed / 42 assertions** |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/InvitationDeliveryTest.php --compact` | **6 passed / 53 assertions**, unchanged F1 tests |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Audit tests/Unit/Audit tests/Integration/AuditTransactionRequirementTest.php tests/Feature/Application/Auditing/OrganizationAuditIntegrationTest.php --compact` | **157 passed / 594 assertions** (Audit 133; C integration 24) |
+| `docker compose exec -T backend php vendor/bin/pest tests/Architecture --compact` | **23 passed / 339 assertions** |
+| `docker compose exec -T backend composer quality` | **367 passed / 2,318 assertions**, no skips; Pint 144 files; Larastan level 8, 92 files, no errors |
+| `docker compose exec -T backend composer format`, `composer analyse` | Formatting/static checks clean; final quality supersedes initial focused analysis |
+| `docker compose exec -T backend composer dump-autoload --optimize --strict-psr` | Passed, 9,095 classes |
+| `docker compose exec -T backend composer validate --strict`, `composer check-platform-reqs`, `composer audit` | Valid/all requirements passed/no security advisories |
+| `docker compose exec -T frontend npm run quality`, `npm audit` | All quality checks/build passed; **45 tests / 9 files**; zero vulnerabilities |
+| `docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test` | **4 passed**, existing authentication/isolation/RBAC/real-Mailpit lifecycle flows |
+| `docker compose config --quiet`, `docker compose ps` | Valid, five services healthy |
+| `docker compose exec -T postgres pg_isready -U coreerp -d coreerp`, `docker compose exec -T redis redis-cli ping` | Accepting connections / PONG |
+| `curl -fsS http://localhost:8088/api/v1/ready`, `curl -fsS http://localhost:5174/api/v1/ready`, `curl -fsS http://localhost:8026/api/v1/info` | HTTP 200; API/proxy status ok; Mailpit reachable |
+| `docker compose exec -T backend php artisan migrate:status` | All five existing migrations Ran; audit batch 5 |
+| `docker compose exec -T postgres psql -U coreerp -d postgres -Atc "SELECT count(*) FROM pg_database WHERE datname = 'coreerp_concurrency_test'"` | Zero; dedicated DB removed |
+| `git diff --check`, migration/frontend/cached diff checks | Clean; migrations/frontend/staged changes empty |
+
+Initial corrections were test-only owner-exception naming and an accidentally overlapping focused run that hit existing-target/create-collision protections. Sequential rerun passed; no foreign target was dropped. Complete backend validation ran in one sequential suite, and browser writes did not overlap backend database tests. Final results above supersede intermediate failures. No failing gate remains.
+
+### Manual review, limitations and stop point
+
+Review replacement's paired event ordering/final ID, persisted expiration precision, actual sorted role sets, accepting versus managing actor attribution, fresh locked state, no-op/owner protections, removal-after-delete recording and mail/audit separation. Review the guarded create/drop code and worker environment before changing test isolation; the fixed target is deliberately not parallel-safe. Browser-created application history is retained normally.
+
+Known limitations: a forcibly killed disposable run may require manually verified cleanup; test database create/drop privileges are required. PostgreSQL administrators can bypass storage protections and privileged SQL can fabricate/omit facts; no cryptographic completeness guarantee. Production privilege separation, retention/privacy, load and hosted deployment remain unverified. No authorized history query, audit.view or UI exists; no production deployment, queue/outbox, expiration or global authentication audit was added.
+
+Recommend separately authorized **1.5E — Authorized Audit Query API**: introduce the approved narrow Audit-owned authorization port implemented by Organization, audit.view, tenant-scoped bounded cursor reads and minimal filters/Resources, with direct/API authorization and cross-tenant denial tests. **Stop here; E has not begun.**

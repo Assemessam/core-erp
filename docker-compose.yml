@@ -54,6 +54,8 @@ services:
 
   postgres:
     image: postgres:18-bookworm
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-15432}:5432"
     environment:
       POSTGRES_DB: coreerp
       POSTGRES_USER: coreerp
