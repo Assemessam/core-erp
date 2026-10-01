@@ -14,9 +14,11 @@ flowchart LR
     Identity --> Mailpit
 ```
 
-Phase 1.4 is implemented locally, awaiting review. It extends the completed Identity/Organization architecture with organization users and invitations. Phase 1.5 Audit Trail and later ERP/notification modules remain unimplemented. See [ADR 0005](../decisions/0005-ddd-modular-monolith-architecture.md), [ADR 0006](../decisions/0006-organization-membership-lifecycle-and-invitations.md), the [roadmap](../phases/phase-01-core-platform.md) and [validation record](../phases/phase-01-organization-users-validation.md).
+Phase 1.4 is implemented locally, awaiting review. Phase 1.5B adds Audit recording contracts and PostgreSQL append-only persistence only; business commands are not instrumented, and no audit query/API/UI is available. Later ERP/notification modules remain unimplemented. See [ADR 0005](../decisions/0005-ddd-modular-monolith-architecture.md), [ADR 0006](../decisions/0006-organization-membership-lifecycle-and-invitations.md), [ADR 0007](../decisions/0007-audit-trail-architecture.md), the [roadmap](../phases/phase-01-core-platform.md) and [audit validation record](../phases/phase-01-audit-trail-validation.md).
 
 ## Bounded contexts and layers
+
+Audit is a supporting module with Application contracts, readonly producer input, stable enums and strict action-specific payload validation, plus Infrastructure Query Builder persistence/provider wiring. It has no Domain, Eloquent model or Presentation layer. The recorder requires a caller-owned physical PostgreSQL transaction and uses the default application connection. Explicit tenant/actor FKs, JSON/size constraints and unconditional statement-level UPDATE/DELETE/TRUNCATE rejection protect storage. No Organization command calls it yet. Producer imports will be limited to Audit Application Contracts/Data/Vocabulary; Audit imports no Organization or Identity code. See ADR 0007 for schema, actor/privacy choices, operational limits and later integration.
 
 Identity owns credentials, registration, login/logout, email verification, password recovery and the current-user representation. Its existing Eloquent User, Fortify adapters/provider, HTTP responses and current-user controller/resource remain in Infrastructure and Presentation. No artificial Identity Domain/Application layers are needed. Identity has no Organization dependency.
 

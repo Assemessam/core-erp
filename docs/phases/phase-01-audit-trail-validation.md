@@ -1,0 +1,135 @@
+# Phase 1.5B — Audit Persistence & Safety Contracts validation
+
+Date: 2026-10-01. Status: implemented locally, awaiting review. Branch: `feature/audit-trail`. Nothing staged, committed or pushed; no branch switch/reset/discard. Phase 1.5C has not begun and Phase 1.5 is not complete.
+
+## Inspection and baseline
+
+Started from a clean working tree on the expected branch. Read AGENTS.md, ADRs 0005/0006, the approved Phase 1.5A proposal and checkpoint B instructions. Inspected Organization/Identity, migration history, architecture checks, Pest/PHPUnit configuration, raw PostgreSQL integrity tests, historical migration compatibility tests and InvitationConcurrencyTest's committed fixture cleanup. No Organization/Identity production files or existing test-isolation configuration changed.
+
+Started the existing Compose stack with `docker compose up -d --wait`. Baseline `docker compose exec -T backend composer quality`: **149 passed / 1,218 assertions**, Pint 117 files, Larastan level 8 clean. Backend database tests ran sequentially, without overlapping browser writes.
+
+## Implemented boundary
+
+[ADR 0007](../decisions/0007-audit-trail-architecture.md) records the design and exact schemas. Audit has Application and Infrastructure only: one recording interface, three readonly input objects, three backed vocabulary enums, one validator, one safe exception, one Query Builder recorder and one explicitly registered provider. No Domain, Presentation, Eloquent audit model, history query, Policy, permission, route, Resource or frontend exists.
+
+All eleven current Organization action schemas are defined, but **no business command calls AuditRecorder**. A regression assertion confirms organization creation emits no audit event in B. No historical event backfill is attempted.
+
+The recorder validates action/subject/version, tenant and identifier shape, actor consistency and exact snapshot fields/types/transitions. It requires a positive Laravel transaction level plus an actual PDO transaction on the current default PostgreSQL connection. It generates ULID IDs, inserts explicit columns and leaves recording time to the database clock_timestamp() default. It neither starts nor commits transactions, switches connections, queues work nor uses afterCommit.
+
+Validation and persistence failures propagate as AuditWriteFailed with a fixed safe message, allowlisted diagnostic category and no previous exception. Sensitive input parameters are annotated. A real FK-failure test enables exception argument rendering and checks the resulting exception string contains neither payload business text nor SQL. This does not claim control over privileged database logging/query listeners.
+
+## Payload and database protections
+
+Exact required/optional action-specific fields are primary. Recursive normalized prohibited-key rejection covers passwords/hashes/reset credentials, tokens/invitation-token hashes, CSRF/XSRF, sessions, cookies, authorization/credentials/secrets, API/access keys and encryption/private keys. Emails, requests, model dumps and mail bodies are not approved fields. Wrong scalar types, objects, floats, invalid UTF8, NUL bytes, missing/unknown fields and impossible transitions fail rather than being removed.
+
+Limits: combined 65,536-byte conservative pretty/Unicode-escaped JSON encoding; PostgreSQL independently checks combined canonical JSONB text octets; depth 3 (root/field/list item); 1,000 collection items; generic string 1,024 characters; organization name 255/role name 80; field key 80 bytes. Relationship sets must already be sorted and distinct. Membership identifiers are canonical positive signed bigint strings. Expiration timestamps are canonical UTC with six fractional digits and independently validate in UTC, regardless of host timezone/DST. Only payload version 1 is accepted.
+
+The installed Laravel 13 HasUlids generates lowercase model IDs. Initial focused tests caught an uppercase-only assumption; Application and SQL ULID checks now accept either case while preserving exact stored identifiers. Only the new audit migration was corrected/reapplied, after verifying the table contained zero rows. Existing models/migrations were not altered.
+
+The new migration creates required tenant, explicit user/system actor, stable action/subject, before/after JSONB, version and database-created timestamptz(6), with no updated_at/deleted_at/metadata. Organization and actor foreign keys restrict delete/update; subjects have no polymorphic FK. SQL enforces structural identifier/actor/snapshot/version/size rules, not the full evolving action schemas.
+
+Five indexes: primary key; tenant chronology; tenant action chronology; tenant subject chronology; actor FK support. No GIN or speculative metadata indexes.
+
+One PL/pgSQL function raises fixed SQLSTATE 55000; two unconditional statement-level BEFORE triggers reject UPDATE/DELETE and TRUNCATE, including zero-row mutation statements. No bypass exists. Raw referenced actor/organization deletion returns PostgreSQL restrictive-reference SQLSTATE 23001; missing FK insertion returns 23503. Natural transaction rollback removes uncommitted inserts.
+
+Migration down/up was tested both through the narrowly targeted new-migration rollback/reapply and through transactional Feature DDL. Triggers, function and table are mechanically removable, with **destruction of history** explicitly documented. Production code rollback should normally retain audit storage.
+
+## Test isolation and coverage
+
+No disposable-database helper or test configuration change was required. Feature tests use the existing outer DatabaseTransactions rollback with nested savepoints; no audit records are deleted for cleanup and no triggers are disabled. The transaction-requirement Integration tests need no committed fixture. Existing InvitationConcurrencyTest and migration compatibility tests pass unchanged. Future instrumented committed concurrency fixtures will need separately scoped defensive isolation support.
+
+Complete-suite partitions relevant to B (not additional executions):
+
+| Area | Passed cases |
+| --- | ---: |
+| Audit pure unit/schema/security | 93 |
+| Audit persistence/Application contract | 6 |
+| Audit real PostgreSQL integrity/immutability/migration | 33 |
+| Audit absent/stale physical transaction integration | 2 |
+| Architecture total, including prior guards | 21 |
+| Complete backend total | 290 |
+
+Coverage includes every approved schema; enum-only actions/subjects; unknown/missing fields; normalized recursive credential keys; malformed/cross-organization organization subjects; invalid actors/types/IDs; total size/depth/collection/string/JSON bounds; stable membership identities; real calendar/DST validation; no-op/invalid transitions; insertion and same-transaction rollback; persistence failure rolling back earlier writes; user/system attribution and explicit tenant separation; statement-level zero-row UPDATE/DELETE and TRUNCATE rejection; raw FK/actor/JSON/size constraints; index/timestamp/trigger structure; migration down/up; safe error chain/arguments; no application instrumentation.
+
+Architecture checks prohibit Audit -> Organization/Identity dependencies, all framework/Infrastructure/Presentation dependencies in Audit Application, Organization Domain -> Audit, foreign module imports of private Audit implementations, artificial B layers, and recorder transaction/afterCommit/dispatch ownership. The default connection call is checked to have no alternate connection argument. Existing controller/domain/application/ambient-context guards remain active. These syntax/dependency tests supplement runtime security checks; they do not prove subject authority or future producer correctness.
+
+## Final commands and results
+
+Commands ran from repository root. Focused runs were used during implementation; final complete results below supersede intermediate failures. No backend database suite ran concurrently with browser writes.
+
+| Command | Final result |
+| --- | --- |
+| `docker compose exec -T backend composer quality` | **290 passed / 1,613 assertions**, no skips; Pint 134 files; Larastan level 8, 91 files, no errors |
+| `docker compose exec -T backend php vendor/bin/pest tests/Unit/Audit --compact` | Focused schema/security iteration passed; final 93 cases are included in complete quality |
+| `docker compose exec -T backend php vendor/bin/pest tests/Unit/Audit tests/Feature/Audit tests/Integration/AuditTransactionRequirementTest.php tests/Architecture --compact` | Focused pre-final run: 153 passed / 647 assertions; two subsequent unit cases pass in complete suite |
+| `docker compose exec -T backend composer format` | Only two new Audit files required formatting; final Pint clean |
+| `docker compose exec -T backend composer analyse` | Focused static analysis clean; final result included in quality |
+| `docker compose exec -T backend composer dump-autoload --optimize --strict-psr` | Passed, 9,091 classes |
+| `docker compose exec -T backend composer validate --strict` | Valid |
+| `docker compose exec -T backend composer check-platform-reqs` | All requirements passed |
+| `docker compose exec -T backend composer audit` | No security vulnerability advisories |
+| `docker compose exec -T frontend npm run quality` | ESLint/Prettier/TypeScript, **9 Vitest files / 45 tests**, production build (122 modules) passed |
+| `docker compose exec -T frontend npm audit` | Zero vulnerabilities |
+| `docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test` | **4 passed**, existing auth/isolation/RBAC/real-Mailpit invitation lifecycle flows |
+| `docker compose config --quiet`, `docker compose up -d --wait`, `docker compose ps` | Valid; all five services healthy |
+| `docker compose exec -T postgres pg_isready -U coreerp -d coreerp` | Accepting connections |
+| `docker compose exec -T redis redis-cli ping` | PONG |
+| `curl -fsS http://localhost:8088/api/v1/ready` | HTTP 200, status ok |
+| `curl -fsS http://localhost:5174/api/v1/ready` | HTTP 200, proxy status ok |
+| `curl -fsS http://localhost:8026/api/v1/info` | HTTP 200, Mailpit reachable |
+| `docker compose exec -T backend php artisan migrate --no-interaction` | Only new audit migration applied |
+| `docker compose exec -T backend php artisan migrate:rollback --path=database/migrations/2026_10_01_000002_create_audit_events_table.php --step=1 --no-interaction` | Only the empty new audit table rolled back, followed by successful migrate/reapply |
+| `docker compose exec -T backend php artisan migrate:status` | All five migrations Ran; audit migration batch 5 |
+| `git diff --check` | Passed |
+| `git diff -- frontend` | Empty |
+| `git diff -- backend/database/migrations` | Empty for tracked files; the only new migration is untracked, listed below |
+| Organization/Identity production, existing concurrency/config, cached diff checks | Empty; nothing staged |
+
+Intermediate test corrections were limited to B: case-preserving ULID compatibility, explicit UTC parsing, PostgreSQL RESTRICT's actual SQLSTATE, and test assertion/closure fixes. Static-analysis nullability findings were resolved using validated local snapshots without suppressions. No failing gate remains.
+
+## Files and review points
+
+Created 19 files: eleven Audit module PHP files; one new migration; five Audit test/support PHP files; ADR 0007; this validation record. Modified five tracked files: bootstrap/providers.php, BoundariesTest.php, README, system overview and Phase 1 roadmap. No frontend, Organization/Identity source, permission enum, historical migration, Composer/npm lock, auth, route or environment file changed.
+
+Review the exact per-action fields/transitions, conservative size encoding, lowercase identifier preservation, user/system consistency, exception-chain sanitization, both physical/logical transaction checks, restrictive FKs and unconditional statement-level triggers. The initial audit permission-list vocabulary mirrors only currently approved keys without importing Organization Domain; future permission additions need explicit schema review.
+
+## Limitations and stop point
+
+Recording does not yet occur in real workflows. Subject ownership and actor authorization belong to later producer commands, not the recorder. No read API or cross-tenant history-access behavior is claimed. PostgreSQL/schema administrators can bypass/drop protections; malicious SQL can insert false facts or unaudited business mutations. This is not cryptographic tamper-proofing or an external provenance/completeness guarantee.
+
+Production runtime/migration role separation and real deployment remain unverified; current Compose credentials are administrative development credentials. Free-text allowlists cannot detect every deliberately embedded secret. Indefinite retained IDs/names need a future privacy/retention decision. No archival infrastructure, production load test or hosted CI was performed.
+
+Previously deferred invitation UX/delivery recovery/README test wording, CORS methods, framework 404 wording, external AUTH_MODEL/cache deployment note and sequential PostgreSQL constraint remain unchanged.
+
+Recommendation for separately authorized 1.5C: add module-owned Organization projections and instrument CreateOrganization, RenameOrganization and SaveRole. Preserve HTTP/return semantics, use fresh locked before snapshots, skip no-ops and prove audit-failure rollback for each command. **Do not begin C until B is reviewed and explicitly authorized.**
+
+## Final Git output
+
+`git status --short`:
+
+```text
+ M README.md
+ M backend/bootstrap/providers.php
+ M backend/tests/Architecture/BoundariesTest.php
+ M docs/architecture/system-overview.md
+ M docs/phases/phase-01-core-platform.md
+?? backend/app/Modules/Audit/
+?? backend/database/migrations/2026_10_01_000002_create_audit_events_table.php
+?? backend/tests/Feature/Audit/
+?? backend/tests/Integration/AuditTransactionRequirementTest.php
+?? backend/tests/Support/AuditFixtures.php
+?? backend/tests/Unit/Audit/
+?? docs/decisions/0007-audit-trail-architecture.md
+?? docs/phases/phase-01-audit-trail-validation.md
+```
+
+`git diff --stat` (tracked files only; all new files remain untracked):
+
+```text
+ README.md                                     |  4 +--
+ backend/bootstrap/providers.php               |  2 ++
+ backend/tests/Architecture/BoundariesTest.php | 42 +++++++++++++++++++++++++++
+ docs/architecture/system-overview.md          |  4 ++-
+ docs/phases/phase-01-core-platform.md         |  4 +--
+ 5 files changed, 51 insertions(+), 5 deletions(-)
+```

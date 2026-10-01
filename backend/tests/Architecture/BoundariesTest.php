@@ -41,6 +41,18 @@ arch('only existing organization relationships and actor adapters consume the Id
 arch('Organization Application does not depend on Identity')
     ->expect('App\\Modules\\Organization\\Application')->not->toUse('App\\Modules\\Identity');
 
+arch('Audit never consumes Organization or Identity internals')
+    ->expect('App\\Modules\\Audit')
+    ->not->toUse(['App\\Modules\\Organization', 'App\\Modules\\Identity']);
+
+arch('Audit Application is framework independent')
+    ->expect('App\\Modules\\Audit\\Application')
+    ->not->toUse(['Illuminate', 'Laravel', 'Symfony', 'App\\Modules\\Audit\\Infrastructure', 'App\\Modules\\Audit\\Presentation',
+        'app', 'auth', 'request', 'response', 'session', 'resolve', 'config', 'event', 'dispatch']);
+
+arch('Organization Domain does not depend on Audit')
+    ->expect('App\\Modules\\Organization\\Domain')->not->toUse('App\\Modules\\Audit');
+
 $appDirectory = dirname(__DIR__, 2).'/app';
 $moduleDirectories = glob($appDirectory.'/Modules/*', GLOB_ONLYDIR) ?: [];
 $controllerNamespaces = ['App\\Http\\Controllers'];
@@ -58,8 +70,38 @@ it('has no obsolete global business directories', function () use ($appDirectory
     }
 });
 
+it('keeps checkpoint B audit layers limited to contracts and persistence', function () use ($appDirectory) {
+    foreach (['Domain', 'Presentation', 'Infrastructure/Eloquent', 'Application/Queries'] as $directory) {
+        expect(is_dir($appDirectory.'/Modules/Audit/'.$directory))->toBeFalse();
+    }
+});
+
+it('keeps audit transaction ownership in the caller', function () use ($appDirectory) {
+    $parser = (new ParserFactory)->createForHostVersion();
+    $finder = new NodeFinder;
+    $code = file_get_contents($appDirectory.'/Modules/Audit/Infrastructure/Persistence/DatabaseAuditRecorder.php');
+    $nodes = $parser->parse($code) ?? [];
+    $violations = $finder->find($nodes, function (Node $node): bool {
+        return ($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall)
+            && $node->name instanceof Node\Identifier
+            && in_array(strtolower($node->name->toString()), ['transaction', 'begintransaction', 'commit', 'rollback', 'aftercommit', 'dispatch'], true);
+    });
+    expect($violations)->toBeEmpty();
+    $connections = $finder->find($nodes, fn (Node $node): bool => $node instanceof Node\Expr\StaticCall
+        && $node->name instanceof Node\Identifier && $node->name->toString() === 'connection');
+    expect($connections)->toHaveCount(1);
+    expect($connections[0]->args)->toBeEmpty();
+});
+
 foreach ($moduleDirectories as $directory) {
     $namespace = 'App\\Modules\\'.basename($directory);
+    if (basename($directory) !== 'Audit') {
+        arch(basename($directory).' does not consume private Audit implementation')
+            ->expect($namespace)->not->toUse([
+                'App\\Modules\\Audit\\Infrastructure', 'App\\Modules\\Audit\\Presentation',
+                'App\\Modules\\Audit\\Application\\Validation', 'App\\Modules\\Audit\\Application\\Exceptions',
+            ]);
+    }
     $outerNamespaces = [...$outerNamespaces, $namespace.'\\Application', $namespace.'\\Infrastructure', $namespace.'\\Presentation'];
     $presentationNamespaces[] = $namespace.'\\Presentation';
     $businessNamespaces = [...$businessNamespaces, $namespace.'\\Domain', $namespace.'\\Application', $namespace.'\\Infrastructure'];

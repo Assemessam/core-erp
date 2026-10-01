@@ -1,0 +1,171 @@
+# ADR 0007: Tenant-scoped audit recording with transactional, append-only persistence
+
+- Status: Accepted design; Phase 1.5B persistence/contracts implemented locally, awaiting review
+- Date: 2026-10-01
+
+## Context and checkpoint boundary
+
+CoreERP's Identity and Organization contexts follow ADR 0005. Organization owns memberships, tenant RBAC and invitations under ADR 0006. Sensitive Organization mutations need attributable history; future approved business modules will need the same recording capability. Technical Laravel logs do not provide that history.
+
+Checkpoint B implements the recording contract, immutable input data, initial vocabulary, strict payload validation, PostgreSQL storage/protection, explicit provider wiring and tests. **No business command records audit events yet.** There is no audit permission, history query, HTTP route, Resource, Policy or frontend. Phase 1.5 is not complete. Later checkpoints require separate authorization.
+
+## Ownership and layers
+
+Audit is a separate supporting module. It owns safe recording, immutable storage and, later, history delivery. Organization continues to own the business facts and actor authorization. Putting Audit under Organization would give tenant administration inappropriate ownership of future Sales/Finance history; making it a platform logger would obscure its payload/disclosure semantics.
+
+Audit currently has Application and Infrastructure only. It has no independent aggregate lifecycle or rich business invariant needing a Domain layer. Its schema validation and immutable inputs are Application recording concerns. Presentation will be introduced only with a real read API. No empty layers, generic repository or Eloquent audit model exist.
+
+An audit event is a persisted fact about a successful business/security mutation. It is not automatically a Domain Event and does not dispatch consumers. Technical logs describe diagnostics; global authentication/security logs need separate scope, volume, privacy and retention decisions. No event sourcing, event bus, queue, outbox or authentication-event instrumentation is introduced.
+
+## Public producer API and dependency direction
+
+The public producer surface is exactly Audit Application `Contracts`, `Data` and `Vocabulary`:
+
+```php
+interface AuditRecorder
+{
+    public function record(AuditEntry $entry): void;
+}
+```
+
+`AuditEntry` is readonly input containing organization ID, `AuditActor`, `AuditAction`, `AuditSubject`, before/after snapshots and payload version. Producers never supply event ID or recording time. Snapshots enter as arrays/null but are accepted only after exact action-specific schemas validate them. Arrays containing objects, floats or unsupported values are rejected; there is no generic model/request serialization.
+
+`AuditActor` and `AuditSubject` are readonly scalar/value structures. Actor vocabulary is a backed `AuditActorType` enum so null cannot silently imply a system actor. Subject accepts an integer/string and preserves its string representation; the validator then requires the identifier appropriate to its subject type.
+
+Future integration direction:
+
+```text
+Organization/future owning module Application
+    -> Audit Application Contracts/Data/Vocabulary
+Audit Infrastructure
+    -> Audit Application
+    -> Laravel's current default PostgreSQL connection
+```
+
+Audit imports no Organization or Identity classes. Table foreign keys are intentional database integrity relationships, not permission to import foreign Eloquent models. Validation and persistence implementations are private. Other modules may not consume Audit Infrastructure, Presentation, Validation or exception implementation details.
+
+Later producers should build deliberate, named module-owned projections from scoped persisted records. The recorder validates shape and vocabulary, not actor authority or another module's subject existence/ownership. Those checks remain in the initiating use case. No producers are added in B.
+
+## Transaction and failure semantics
+
+Recording is explicit and synchronous. The recorder resolves the current default application PostgreSQL connection on every call. It requires both Laravel's transaction level to be positive and PDO to report a physical transaction. Unsupported drivers, absent transactions and stale transaction counters fail safely.
+
+It generates a ULID and inserts explicit columns through Query Builder. It never creates a second connection, starts/commits a transaction, calls afterCommit, queues work or logs payloads. PostgreSQL supplies `created_at` with `clock_timestamp()`.
+
+Once producers are instrumented, business mutation and audit insert must commit together or both roll back. A validation/persistence failure propagates as a safe `AuditWriteFailed`; producers must not catch and ignore it. The exception has a fixed message and allowlisted diagnostic category, with no previous database exception. QueryException bindings and PostgreSQL failing-row details must not reach framework exception logging through a retained exception chain. Sensitive input parameters are marked with PHP's SensitiveParameter attribute.
+
+Later rename integration needs a transaction and a fresh locked row for truthful before values. Existing role/lifecycle/invitation transactions remain Application-owned. Invitation delivery stays after commit; an invitation-created fact does not assert successful SMTP delivery. A later mail failure leaves the committed invitation and audit fact intact.
+
+The physical recording clock is not commit order. ULIDs and timestamps do not globally serialize concurrent business commands. There is no global audit write lock.
+
+## Tenant and actor identity
+
+Every row has `organization_id NOT NULL`. Global authentication or hypothetical platform events cannot use null tenants in this table.
+
+- User actor: positive integer `actor_user_id`, type `user`.
+- System actor: null user ID, type `system`.
+
+Application and PostgreSQL enforce the combination independently. Existing future Organization producers will use authenticated user actors; schema support for system attribution grants no new business authorization bypass.
+
+No actor name/email snapshot is stored. Historical actor attribution is the stable user ID; a later UI can initially display User #ID. No current Identity projection or polymorphic actor machinery is required. Identifiers remain potentially sensitive data even without duplicated email addresses.
+
+## Stable action and subject vocabulary
+
+Subjects are `organization`, `role`, `invitation`, `membership`, never PHP class names. Organization/role/invitation IDs are valid ULIDs, preserving case: the installed Laravel 13 HasUlids implementation creates lowercase IDs, while Str::ulid produces uppercase strings. Membership IDs are canonical positive decimal bigint strings up to 9223372036854775807. Organization subjects must equal the explicitly supplied organization ID.
+
+Initial server-owned action enum:
+
+```text
+organization.created       organization.renamed
+role.created               role.updated
+invitation.created         invitation.revoked       invitation.accepted
+membership.roles_changed   membership.suspended
+membership.activated       membership.removed
+```
+
+Action -> subject mapping is explicit. No arbitrary action string can enter AuditEntry. SQL validates bounded action identifier syntax, subject vocabulary and identifier structure; exact action/version schemas remain Application-owned. Raw privileged SQL can therefore insert syntactically valid unsupported actions or otherwise false facts; database append-only protection does not establish their provenance.
+
+## Version-one payload schemas
+
+Each snapshot is a JSON object or SQL null. At least one exists. Create uses null before, removal uses null after. Update snapshots contain matching changed fields, except deliberate result facts on invitation acceptance/replacement. No-op transitions are rejected by the recorder; later producers should skip recording them.
+
+| Action | Before | After |
+| --- | --- | --- |
+| organization.created | null | name, owner_user_id, owner_membership_id |
+| organization.renamed | name | changed name |
+| role.created | null | name, permissions |
+| role.updated | name and/or permissions | same keys, each changed |
+| invitation.created | null | state=pending, expires_at, role_ids |
+| invitation.revoked | state=pending | state=revoked; optional paired reason=replaced and replacement_invitation_id |
+| invitation.accepted | state=pending | state=accepted, membership_id, user_id, role_ids |
+| membership.roles_changed | user_id, role_ids | same user_id, changed role_ids |
+| membership.suspended | user_id, status=active | same user_id, status=suspended |
+| membership.activated | user_id, status=suspended | same user_id, status=active |
+| membership.removed | user_id, status=active/suspended, role_ids | null |
+
+Creation's owner and acceptance's resulting user must equal the user actor. Replacement cannot point to the revoked invitation itself. Subject/role IDs are structurally checked but their tenant ownership remains producer responsibility.
+
+Names are nonblank strings, bounded to the existing organization 255/role 80 character limits. IDs in facts are positive PHP integers. Permission lists use the four current approved permission keys (`members.invite`, `members.view`, `organizations.update`, `roles.view`), deliberately without importing Organization's Domain enum. A new permission, including future audit.view, needs a reviewed schema-vocabulary extension with tests. Lists are sequential, sorted by exact string value and duplicate-free; validation rejects instead of sorting/truncating input. Expiration is a real calendar timestamp in canonical UTC `YYYY-MM-DDTHH:MM:SS.ffffffZ` form.
+
+Only payload version 1 is accepted now. Evolving payloads require an explicit version/schema change and tests; existing stored records must remain interpretable.
+
+Reinvite will eventually record the old invitation's revocation and the new invitation's creation atomically, not a redundant third event. Acceptance includes membership/bootstrap grants; internal pivot operations should not create duplicate facts. Derived expiration, low-value reads, failed commands, fixture/migration writes and global auth events have no records here. Existing history is not backfilled with invented observations.
+
+## Secret rejection and payload bounds
+
+Exact per-action required/optional field allowlists are the primary guard. Unknown keys, missing keys, wrong types, unsupported action/subject/version, illegal transitions and malformed identifiers fail recording; no sanitize-and-continue behavior exists.
+
+Recursive defense in depth normalizes key case and punctuation and rejects password/password-hash/reset credentials, tokens/invitation-token hashes, CSRF/XSRF, sessions, cookies, authorization/credentials/secrets, API/access keys and private/encryption keys. Invitation/actor email, raw HTTP headers/requests, mail credentials/bodies, credential-bearing URLs and model dumps are never approved fields. Generic objects, non-UTF8 strings and NUL bytes are rejected.
+
+Explicit bounds:
+
+- Combined before+after: at most 65,536 bytes, conservatively measured using JSON_PRETTY_PRINT with normal Unicode escaping. This can reject before the PostgreSQL canonical JSONB text limit; it never silently truncates.
+- PostgreSQL independently limits the combined octet_length of both JSONB text representations to 65,536 bytes.
+- Depth 3 counting snapshot root as 1, field/list as 2 and list item as 3. Current schemas permit only flat scalar fields and flat string lists.
+- At most 1,000 items per collection; total size also applies across both snapshots.
+- Generic scalar string at most 1,024 Unicode characters; names have the tighter limits above; field names at most 80 bytes.
+
+The validator also rejects recursive arrays through its depth guard. These controls do not detect every secret deliberately pasted into an approved free-text name. Safe projection, code review and tests remain necessary. There is no claim of universal secret-value detection.
+
+## PostgreSQL storage and append-only behavior
+
+New migration only: `2026_10_01_000002_create_audit_events_table.php`. Historical migrations and permission catalog remain unchanged.
+
+| Column | Type / semantics |
+| --- | --- |
+| id | char(26) primary-key ULID, recorder-generated |
+| organization_id | char(26), required FK |
+| actor_type | varchar(16), required |
+| actor_user_id | bigint nullable FK |
+| action | varchar(80), required |
+| subject_type | varchar(32), required |
+| subject_id | varchar(64), required |
+| before / after | nullable JSONB objects |
+| payload_version | positive smallint; Application currently accepts only 1 |
+| created_at | required timestamptz(6), clock_timestamp() default |
+
+No updated_at, deleted_at or arbitrary metadata. Both actor and organization foreign keys use ON DELETE RESTRICT / ON UPDATE RESTRICT. No subject FK: history intentionally survives subject deletion. Account/organization physical deletion now requires a later architectural decision once referenced by audit rows. ON DELETE SET NULL would update immutable history and is deliberately excluded.
+
+Indexes: primary key; actor_user_id for FK checks; (organization_id, created_at DESC, id DESC); the same chronology prefixed with action; the same chronology prefixed with subject_type/subject_id. These prepare the approved later bounded cursor/action/subject reads. No GIN, metadata or speculative actor-filter index exists.
+
+One small PL/pgSQL function raises SQLSTATE 55000 with a fixed append-only message. Two unconditional BEFORE FOR EACH STATEMENT triggers reject UPDATE/DELETE and TRUNCATE, including zero-row attempts. There is no application/session/test bypass flag, soft-delete path or Eloquent mutation model. Rolling back an uncommitted insert is correct transactional behavior and requires no deletion bypass.
+
+The table, indexes, constraints and triggers are installed in the same transactional migration. down mechanically drops the triggers, function and table. **Schema rollback destroys history** and is not the preferred production application rollback: retain audit storage when reverting code. No export/archive subsystem is added.
+
+## Threat model, retention and operations
+
+Triggers protect normal SQL mutations. PostgreSQL superusers/schema owners or administrators with sufficient DDL privileges can disable/drop them or destroy storage. A compromised application can still issue direct business writes without instrumentation or insert fabricated audit facts. This is neither cryptographic tamper-proofing nor proof of completeness/provenance.
+
+A production runtime role should have only necessary audit SELECT/INSERT privileges, without table ownership, UPDATE/DELETE/TRUNCATE or migration privileges. Current Compose credentials have development administrative privileges; privilege separation is documented deployment work, not implemented by B. Payload-bearing query listeners/database statement logs require the same privacy discipline as other business data; safe exception wrapping cannot control privileged external log configuration.
+
+Retain history indefinitely for current portfolio scope. No retention/deletion API/job exists. Future privacy, archival, tenant offboarding and account erasure decisions must reconcile retained identifiers/business names, existing owner/inviter constraints and audit immutability. No email/name/IP/user-agent snapshots, broad correlation subsystem, hash chaining, signatures, blockchain or external WORM storage are included.
+
+## Verification and later checkpoints
+
+Unit tests exercise all initial schemas and failures without Laravel. PostgreSQL Feature tests use the existing outer rollback transactions/savepoints to prove insert, rollback, FK/JSON/size constraints, timestamp/default/index structure and statement-level rejection. A no-fixture Integration test proves absent/stale physical transaction rejection. Migration down/up is tested inside the outer rollback; it is not audit-row deletion cleanup.
+
+No test-isolation helper, trigger disabling, audit DELETE cleanup or committed audit fixture is needed in B. Existing InvitationConcurrencyTest remains untouched because Organization commands do not emit audit yet. When later instrumentation makes its committed organization cleanup impossible, introduce defensive dedicated disposable-database support in that checkpoint. Keep backend database suites sequential and separate from browser writes.
+
+Architecture checks enforce framework-free Audit Application, no Audit -> Organization/Identity imports, no Organization Domain -> Audit, private implementation isolation, no controller writes/transactions and caller-owned recorder transaction control. Runtime tests supplement static rules.
+
+Approved later scope, not implemented: Organization/RBAC producers; invitation/membership producers; audit.view and authorized tenant history with a narrow Audit-owned authorization port implemented by Organization; newest-first created_at/id cursor pagination; minimal action/subject filters; safe Resource; view-local Vue Audit Trail and browser flow. No future business modules are created now.
