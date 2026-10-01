@@ -1,15 +1,14 @@
 <?php
 
 use App\Http\Controllers\HealthController;
-use App\Http\Resources\UserResource;
+use App\Modules\Identity\Presentation\Http\Controllers\CurrentUserController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationRoleController;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', [HealthController::class, 'live']);
 Route::get('/ready', [HealthController::class, 'ready']);
-Route::get('/me', fn (Request $request) => new UserResource($request->user()))->middleware('auth:sanctum');
+Route::get('/me', CurrentUserController::class)->middleware('auth:sanctum');
 Route::middleware(['auth:sanctum', 'verified'])->group(function (): void {
     Route::scopeBindings()->group(function (): void {
         Route::get('/organizations/{organization}/roles', [OrganizationRoleController::class, 'index']);

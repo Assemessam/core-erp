@@ -1,12 +1,12 @@
 <?php
 
-namespace App\Providers;
+namespace App\Modules\Identity\Infrastructure\Providers;
 
-use App\Actions\Fortify\CreateNewUser;
-use App\Actions\Fortify\ResetUserPassword;
-use App\Http\Responses\LoginResponse;
-use App\Http\Responses\PasswordResetLinkResponse;
-use App\Models\User;
+use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
+use App\Modules\Identity\Infrastructure\Fortify\CreateNewUser;
+use App\Modules\Identity\Infrastructure\Fortify\ResetUserPassword;
+use App\Modules\Identity\Presentation\Http\Responses\LoginResponse;
+use App\Modules\Identity\Presentation\Http\Responses\PasswordResetLinkResponse;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;

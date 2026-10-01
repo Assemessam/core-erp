@@ -2,7 +2,7 @@
 
 namespace App\Modules\Organization\Infrastructure\Authorization;
 
-use App\Models\User;
+use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
 use App\Modules\Organization\Application\Authorization\OrganizationAccess;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use Illuminate\Auth\Access\Response;

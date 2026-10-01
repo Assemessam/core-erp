@@ -1,8 +1,14 @@
 <?php
 
+use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
 use App\Modules\Organization\Application\Commands\CreateOrganization;
 use App\Modules\Organization\Application\Commands\RenameOrganization;
 use App\Modules\Organization\Application\Queries\ListOrganizations;
+use App\Modules\Organization\Infrastructure\Authorization\OrganizationPolicy;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
+use App\Modules\Organization\Infrastructure\Eloquent\Models\OrganizationMembership;
+use App\Modules\Organization\Presentation\Http\Controllers\OrganizationController;
+use App\Modules\Organization\Presentation\Http\Controllers\OrganizationRoleController;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Facades\Auth;
@@ -15,6 +21,20 @@ use PhpParser\ParserFactory;
 use Symfony\Component\Finder\Finder;
 
 // Architecture tests intentionally do not boot Laravel or use a database.
+arch('Identity does not depend on Organization')
+    ->expect('App\\Modules\\Identity')->not->toUse('App\\Modules\\Organization');
+
+arch('Organization does not consume Identity internals other than the User persistence type')
+    ->expect('App\\Modules\\Organization')->not->toUse('App\\Modules\\Identity')
+    ->ignoring(User::class);
+
+arch('only existing organization relationships and actor adapters consume the Identity User')
+    ->expect('App\\Modules\\Organization')->not->toUse(User::class)
+    ->ignoring([
+        Organization::class, OrganizationMembership::class, OrganizationPolicy::class,
+        CreateOrganization::class, OrganizationController::class, OrganizationRoleController::class,
+    ]);
+
 $appDirectory = dirname(__DIR__, 2).'/app';
 $moduleDirectories = glob($appDirectory.'/Modules/*', GLOB_ONLYDIR) ?: [];
 $controllerNamespaces = ['App\\Http\\Controllers'];
@@ -87,7 +107,7 @@ it('keeps Application independent of HTTP delivery when introduced', function ()
     ]);
     expect($applicationNamespaces)->not->toUse('Illuminate\\Validation\\ValidationException');
     // CreateOrganization reads only the explicit owner's key; no Identity mutation is authorized.
-    expect($applicationNamespaces)->not->toUse('App\\Models\\User')->ignoring(CreateOrganization::class);
+    expect($applicationNamespaces)->not->toUse('App\\Modules\\Identity\\Infrastructure\\Eloquent\\Models\\User')->ignoring(CreateOrganization::class);
 })->skip($applicationNamespaces === [], 'No module Application layer exists yet; activates automatically when introduced.');
 
 it('keeps explicit transaction control out of controllers', function () use ($controllerDirectories) {

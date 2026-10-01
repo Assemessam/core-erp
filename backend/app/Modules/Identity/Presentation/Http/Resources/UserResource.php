@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Http\Resources;
+namespace App\Modules\Identity\Presentation\Http\Resources;
 
-use App\Models\User;
+use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

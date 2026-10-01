@@ -684,3 +684,93 @@ Existing HTTP payloads, 201/200 resources, 422 fields/messages, 401/403/404 secu
 Review the scalar rule's responsibility versus persisted composite constraints, the variadic enum signature/input conversion, exact conflict detection and mapping, and the revised rollback fault injection. Plain git diff --stat excludes six new untracked files; inspect them too.
 
 Recommend the next separately approved checkpoint be a mechanical Identity migration: preserve User relationships, auth configuration, factory/model resolution, Fortify bindings, current-user representations, notifications and authentication URLs; keep it separate from any behavioral cleanup or Phase 1.4 functionality. **Stop after E; Identity migration has not begun.**
+
+## Phase 1.3.5F — Mechanical Identity Module Migration
+
+Status: complete locally; awaiting review/commit. Only F was implemented. The final cleanup/enforcement checkpoint and Phase 1.4 have not started. ADR 0005 remains unchanged.
+
+### Baseline and inspection
+
+Started on `refactor/ddd-architecture`, clean working tree, E checkpoint `d8cfdb5` (`refactor: extract organization domain invariants`). Read AGENTS.md, ADR 0005 and the preceding validation record; inspected auth/Fortify/Sanctum configuration, provider registration, routes, model/factory, actions/responses/resources, auth tests and Organization consumers. Repository-wide reference searches found no use of `User::organizationMemberships()` outside its declaration and no application-class dependencies in historical migrations. Baseline authentication: 13 tests / 71 assertions; complete backend: 99 tests / 855 assertions.
+
+### Changes and ownership
+
+Eight existing classes moved into `App\Modules\Identity`; the only new production class is the trivial CurrentUserController:
+
+```text
+backend/app/Modules/Identity/
+├── Infrastructure/
+│   ├── Eloquent/Models/User.php
+│   ├── Fortify/
+│   │   ├── CreateNewUser.php
+│   │   ├── PasswordRules.php
+│   │   └── ResetUserPassword.php
+│   └── Providers/FortifyServiceProvider.php
+└── Presentation/Http/
+    ├── Controllers/CurrentUserController.php
+    ├── Resources/UserResource.php
+    └── Responses/
+        ├── LoginResponse.php
+        └── PasswordResetLinkResponse.php
+```
+
+- User remains Eloquent/Authenticatable/MustVerifyEmail with unchanged casts, fillable/hidden fields, hashing and notifications. Its unused inverse Organization relationship was removed as explicitly authorized. No Identity Domain/Application directories, aggregate, repository, events or Shared Kernel were introduced.
+- `config/auth.php` changes only the User import. The existing AUTH_MODEL override, guards and brokers remain intact. `bootstrap/providers.php` registers the moved Fortify provider in the same order.
+- User explicitly declares `UseFactory(UserFactory::class)`; the central UserFactory explicitly sets `$model = User::class`. No factory/seed structure changes; the empty seeder needs no edit.
+- Fortify actions/provider, UserResource and both response adapters have equivalent class bodies after excluding namespace/import/formatting differences (compared to HEAD). Password validation/normalization, throttling, reset URLs, login 204 and reset-link response parity remain unchanged.
+- `/api/v1/me` now invokes CurrentUserController, using the same request-user-to-UserResource expression. It retains Sanctum middleware, guest 401, unverified-user access and the same four resource fields.
+- Six Organization files change only their User import: Organization and OrganizationMembership models, OrganizationPolicy, CreateOrganization, OrganizationController and OrganizationRoleController. AccessDecision, OrganizationAccess, OrganizationFailureMapper and authorization/transaction behavior are unchanged.
+- Ten existing feature-test files update imports (four Application tests, characterization, three Auth tests, OrganizationsTest, RbacTest). BoundariesTest gains three architecture rules and updates its existing User exception. Characterization adds a persisted auth-provider retrieval and both Organization-to-User relationship checks. Existing factory, policy, Fortify, auth, reset, verification, tenancy and API assertions are retained.
+- README, system overview, Phase 1 roadmap and this validation record describe the implemented checkpoint. AGENTS.md, ADRs, Composer/PHPStan configuration, dependency locks, migrations and frontend source are unchanged.
+
+### Remaining cross-context dependencies and safeguards
+
+Identity has no Organization dependency. Organization owns membership and tenant RBAC. Organization's two persistence relationships reference the moved Identity User. Four additional pre-existing actor adapters/signatures also reference User: OrganizationPolicy, CreateOrganization (reads the explicit owner's key only), and the two HTTP controllers. They are retained mechanically, not represented as newly approved general dependencies or Identity mutations. The architecture suite allows exactly these six consumers of User, rejects other Identity internals, and rejects all Identity-to-Organization references. Existing Domain isolation and Application-to-HTTP restrictions remain active. Reducing the CreateOrganization actor type to an identifier is a potential separately authorized cleanup decision, not part of F.
+
+### Commands and results
+
+Commands ran from the repository root; backend tests remained sequential, with browser writes only after backend tests finished.
+
+| Command | Result |
+| --- | --- |
+| `git branch --show-current`, `git status --short`, `git log -1 --oneline` | Correct branch, clean E baseline |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Auth --compact` | Baseline and final: 13 passed, 71 assertions; includes reset and verification |
+| `docker compose exec -T backend composer test` | Baseline: 99 passed, 855 assertions |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Auth tests/Feature/ArchitectureCharacterizationTest.php tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php --compact` | After User/factory/relationship move: 43 passed, 432 assertions |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Auth/AuthenticationTest.php tests/Feature/Auth/PasswordResetTest.php --compact` | After Fortify action move: 10 passed, 55 assertions |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Auth --compact` | After provider move: 13 passed, 71 assertions |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/ArchitectureCharacterizationTest.php tests/Architecture --compact` | Final: 23 passed, 407 assertions |
+| `docker compose exec -T backend composer dump-autoload --optimize --strict-psr` | Passed; package discovery and 9,052-class optimized autoload generated |
+| `docker compose exec -T backend php vendor/bin/pint <changed PHP paths>` | Applied import ordering only; paths enumerated using host Git |
+| `docker compose exec -T backend composer quality` | 103 tests / 880 assertions; Pint 81 files; Larastan level 8, no errors (51 analyzed files) |
+| `docker compose exec -T backend php vendor/bin/pest --testsuite=Architecture --compact` | 12 passed, 212 assertions, no skips |
+| `docker compose exec -T backend composer validate --strict` | Valid |
+| `docker compose exec -T backend composer check-platform-reqs` | All requirements passed |
+| `docker compose exec -T backend composer audit` | No vulnerability advisories |
+| `docker compose exec -T frontend npm run quality` | ESLint, Prettier, TypeScript, 7 Vitest files / 28 tests, production build passed |
+| `docker compose exec -T frontend npm audit` | Zero vulnerabilities |
+| `docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test` | All 3 passed, none skipped; existing 2 browser workers unchanged |
+| `docker compose config --quiet`, `docker compose ps` | Valid; backend, frontend, PostgreSQL, Redis, Mailpit healthy |
+| `docker compose exec -T postgres pg_isready -U coreerp` | Accepting connections |
+| `docker compose exec -T redis redis-cli ping` | PONG |
+| `curl --fail --silent --show-error http://localhost:8088/api/v1/health` | HTTP 200, data.status ok |
+| `curl --fail --silent --show-error http://localhost:8088/api/v1/ready` | HTTP 200, data.status ok |
+| `curl --fail --silent --show-error http://localhost:5174/api/v1/ready` | HTTP 200 through frontend proxy, data.status ok |
+| `curl --fail --silent --show-error -o /dev/null -w 'Mailpit HTTP %{http_code}\n' http://localhost:8026/` | HTTP 200 |
+| `docker compose exec -T backend php artisan route:list --json` | Before/after: 21 routes; only /me action and closure source-location metadata differ |
+| `docker compose exec -T backend php artisan migrate:status` | All three historical migrations Ran |
+| `git diff --check` | Passed |
+| `git diff -- backend/database/migrations`, `git diff -- frontend` | Both empty |
+| `git diff --find-renames`, `git status --short`, `git diff --stat` | Reviewed; unstaged new module remains untracked, so ordinary diff does not include its additions |
+
+Initial validation corrections: the new provider test first omitted the provider name, which can resolve null when the default guard has been switched to Sanctum by earlier tests; it now explicitly requests the configured `users` provider. No production fix was needed. Pint's `--dirty` option was unavailable inside the container (no Git metadata); host-enumerated changed PHP paths were formatted instead. An initial quality run passed all tests but found four import-order issues, then the complete quality rerun passed. Route comparison initially included closure source-location metadata; inspection established the expected action/path-only change before comparing HTTP contract fields. No failing check remains.
+
+### Compatibility, limitations and review points
+
+- Authentication, password recovery/verification, Organization/RBAC, session/security, API resource/status and tenant semantics have no intentional changes; backend and browser suites pass. Redis-backed refresh/logout, CSRF and Mailpit verification were exercised by the existing browser flows.
+- No migration/schema or frontend source changes. Tests/browser workflows create ordinary test records as before; this is not a schema/data migration. The same three migration files remain applied.
+- Framework class identity necessarily changes with the namespace; `/me` route-list action/source metadata changes as described. No additional externally visible HTTP behavior change was observed. Existing incidental Organization missing-model 404 text remains as recorded in C; no response normalization was introduced.
+- Current development runtime has no AUTH_MODEL override referencing the old class. External deployments with such an override or stale config/autoload caches must update/rebuild them when deploying; no compatibility alias was introduced. No cross-version serialized payload deployment was tested.
+- Existing PostgreSQL outer-transaction/schema-manipulation test limitations remain. Backend tests were not parallelized. Existing CORS cross-origin PATCH concern is unchanged and deferred; the supported same-origin proxy passes.
+- Review factory wiring, explicit provider registration, removal of the unused inverse relationship, the /me adapter, and the six exact cross-context exceptions. Static dependency rules are not a proof of absence of indirect Identity writes or tenant leaks.
+- No staging, commit, push, branch switch, reset or discarded work. Stop after F. Recommend reviewing/committing this checkpoint before separately authorizing the final cleanup/enforcement inventory; do not introduce additional abstractions merely for symmetry.

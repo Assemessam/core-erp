@@ -3,7 +3,7 @@
 namespace App\Modules\Organization\Presentation\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\Models\User;
+use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
 use App\Modules\Organization\Application\Commands\SaveRole;
 use App\Modules\Organization\Domain\Authorization\PermissionKey;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;

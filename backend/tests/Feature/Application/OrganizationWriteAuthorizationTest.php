@@ -1,6 +1,6 @@
 <?php
 
-use App\Models\User;
+use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
 use App\Modules\Organization\Application\Authorization\AccessDecision;
 use App\Modules\Organization\Application\Authorization\AccessDenied;
 use App\Modules\Organization\Application\Commands\CreateOrganization;

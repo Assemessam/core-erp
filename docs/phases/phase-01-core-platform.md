@@ -8,7 +8,7 @@
 | **1.1 Authentication** | First-party SPA registration, login, recovery, verification, session security, and tests | **Complete** |
 | **1.2 Organizations and memberships** | Shared-schema tenant boundary, ownership, membership, onboarding, and isolation tests | **Complete** |
 | **1.3 RBAC** | Membership-scoped roles, application permissions, policies, tenant constraints, and role administration | **Complete** |
-| **1.3.5 DDD Modular Monolith Refactor** | Establish bounded contexts, pragmatic Application boundaries, CQRS-lite, and architecture guardrails while preserving behavior | **In progress; Organization Domain/error cleanup complete** |
+| **1.3.5 DDD Modular Monolith Refactor** | Establish bounded contexts, pragmatic Application boundaries, CQRS-lite, and architecture guardrails while preserving behavior | **In progress; mechanical Identity migration complete** |
 | 1.4 User invitations / organization users | Invitation lifecycle and organization user management | Planned; not implemented |
 | 1.5 Audit trail | Record relevant security and domain activity | Planned; not implemented |
 | 1.6 Notifications and queues | Notification delivery and asynchronous execution | Planned; not implemented |
@@ -24,7 +24,8 @@ Phase 1.0 established the operational Laravel/Vue shell and quality checks; see 
 - **1.3.5C — Mechanical Organization Module Namespace Migration: complete.** Existing classes moved into Organization layers, with explicit Policy wiring and active Domain/Application guardrails. No intentional business/API/schema/frontend changes. See the checkpoint-C validation record.
 - **1.3.5D — Centralize Organization Authorization: complete.** OrganizationAccess provides fresh persisted decisions shared by Policy adapters and self-authorizing rename/role writes; direct-invocation, Policy parity, and HTTP-denial tests pass.
 - **1.3.5E — Domain Invariants and Application Error Cleanup: complete.** Pure membership-role tenant rule, typed permission inputs, specific Domain/Application failures and compatible HTTP adapters; Application ValidationException exceptions removed.
-- **Later 1.3.5 checkpoints:** require separate authorization; not started. Identity migration remains pending.
+- **1.3.5F — Mechanical Identity Module Migration: complete.** User, Fortify integration, current-user representation and response adapters now belong to Identity Infrastructure/Presentation. Explicit auth-provider/factory wiring preserves authentication behavior; no artificial Domain/Application layer was added. Organization still owns membership and tenant RBAC.
+- **Final 1.3.5 cleanup/enforcement checkpoint:** requires separate authorization; not started.
 
 The approved direction keeps Identity separate from Organization, with memberships and tenant RBAC together in Organization. Current lightweight paths retain Eloquent; richer domain aggregates and repositories require actual business invariants. Acceptance is the same business behavior, HTTP API, frontend, database, and tenant/security semantics with different backend architecture.
 

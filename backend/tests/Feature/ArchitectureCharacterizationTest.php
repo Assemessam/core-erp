@@ -1,14 +1,15 @@
 <?php
 
-use App\Actions\Fortify\CreateNewUser;
-use App\Actions\Fortify\ResetUserPassword;
-use App\Http\Responses\LoginResponse;
-use App\Http\Responses\PasswordResetLinkResponse;
-use App\Models\User;
+use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
+use App\Modules\Identity\Infrastructure\Fortify\CreateNewUser;
+use App\Modules\Identity\Infrastructure\Fortify\ResetUserPassword;
+use App\Modules\Identity\Presentation\Http\Responses\LoginResponse;
+use App\Modules\Identity\Presentation\Http\Responses\PasswordResetLinkResponse;
 use App\Modules\Organization\Application\Commands\CreateOrganization;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPolicy;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use Database\Factories\UserFactory;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
 use Laravel\Fortify\Contracts\CreatesNewUsers;
 use Laravel\Fortify\Contracts\FailedPasswordResetLinkRequestResponse;
@@ -33,6 +34,18 @@ it('resolves the configured Fortify actions and response adapters', function () 
     ] as $contract => $implementation) {
         expect(app($contract))->toBeInstanceOf($implementation);
     }
+});
+
+it('resolves persisted identity through authentication and organization relationships', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $organization = app(CreateOrganization::class)->handle($owner, 'Identity wiring');
+    $membership = $organization->memberships()->create(['user_id' => $member->id]);
+
+    expect(Auth::createUserProvider('users')->retrieveById($owner->id))
+        ->toBeInstanceOf(User::class)->id->toBe($owner->id);
+    expect($organization->owner)->toBeInstanceOf(User::class)->id->toBe($owner->id);
+    expect($membership->user)->toBeInstanceOf(User::class)->id->toBe($member->id);
 });
 
 it('returns the unchanged public current-user resource before verification', function () {

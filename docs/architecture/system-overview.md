@@ -15,7 +15,7 @@ In local development Vite forwards API, Sanctum CSRF, and Fortify routes to Lara
 
 ## Current structure and architecture groundwork
 
-Phase 1.3 is implemented. Phase 1.3.5A established guardrails, B extracted listing/rename operations, C mechanically moved Organization into `App\Modules\Organization`, D centralized Organization authorization, and **E extracted the first pure Domain invariant and cleaned up Application failures**. Identity (including User, Fortify, and `/me`) and platform health/readiness remain in conventional namespaces.
+Phase 1.3 is implemented. Phase 1.3.5A established guardrails, B extracted listing/rename operations, C mechanically moved Organization into `App\Modules\Organization`, D centralized Organization authorization, and **E extracted the first pure Domain invariant and cleaned up Application failures**. **F mechanically moved Identity into `App\Modules\Identity`**. Platform health/readiness remain in conventional namespaces.
 
 | Current module layer | Contents |
 | --- | --- |
@@ -35,7 +35,19 @@ OrganizationController delegates listing, creation, and rename; show authorizes 
 
 OrganizationAccess accepts actor and organization IDs. AccessDecision distinguishes ALLOWED, HIDDEN and FORBIDDEN and carries the existing application-owned denial message. Policies translate decisions through AccessResponse; Application writes throw AccessDenied on denial. A narrowly registered exception mapping in bootstrap/app.php reuses AccessResponse to produce Laravel AuthorizationException, preserving the existing HTTP renderer and 404/403 distinction. The evaluator never invokes Gate, Policies, ambient authentication, or HTTP helpers.
 
-Remaining temporary dependencies: Infrastructure owner/user relationships and the Policy reference `App\Models\User`; CreateOrganization accepts the explicit owner and reads its key; Presentation uses User for authenticated input. User retains its inverse membership relationship. Organization Application no longer depends on ValidationException or HTTP authorization helpers. Broader RBAC read-query extraction and Identity migration remain deferred.
+Remaining narrow dependencies point from Organization to `Identity\Infrastructure\Eloquent\Models\User`: Organization::owner and OrganizationMembership::user persistence relationships, OrganizationPolicy actor types, CreateOrganization's explicit owner parameter (reads its key only), and the two Organization controllers' authenticated-user assertions. These six existing consumers are individually allowlisted, not permission for general cross-context access or Identity mutation. The unused User::organizationMemberships inverse was removed after a repository-wide usage search. Identity now has no Organization dependency. Organization Domain remains independent of Identity and Application remains independent of HTTP failures. Broader RBAC read-query extraction is deferred.
+
+## Identity module
+
+Identity intentionally has Infrastructure and Presentation only; there is no artificial User aggregate, repository, Domain layer, or Application wrapper around Fortify.
+
+- `Infrastructure/Eloquent/Models/User` retains Authenticatable, MustVerifyEmail, notifications, hashing, hidden/fillable fields and casts. `config/auth.php` points to this model without changing guards or password brokers.
+- `Infrastructure/Fortify` contains CreateNewUser, ResetUserPassword and PasswordRules unchanged apart from namespaces/imports.
+- `Infrastructure/Providers/FortifyServiceProvider` retains action/response bindings, login throttling, root/reset URL generation and SPA configuration; bootstrap/providers.php explicitly registers it.
+- `Presentation/Http/Resources/UserResource` and `Responses/{LoginResponse,PasswordResetLinkResponse}` preserve their representations. The trivial invokable CurrentUserController replaces the `/api/v1/me` closure with the same authenticated-user-to-resource expression and `auth:sanctum` middleware. Unverified users can still read `/me`.
+- Central `database/factories/UserFactory` explicitly sets its model; User explicitly declares `UseFactory(UserFactory::class)`. Tests import the moved User; the empty central seeder requires no change.
+
+The SPA still uses CSRF cookies, Laravel session authentication, Redis sessions and Sanctum stateful access. Password reset, email verification, account-enumeration protection, resource fields and HTTP status codes are unchanged. No frontend, session/Sanctum/Fortify configuration, schema, migration, or dependency changes accompany this migration.
 
 ## Domain invariant and Application failures
 
@@ -56,7 +68,7 @@ The existing PostgreSQL duplicate-name detection now raises RoleNameConflict aft
 - Controllers invoke direct write use cases/queries. Reads may use efficient Eloquent/query-builder/SQL. No buses, event sourcing, separate read database, or new domain events.
 - Policies are Laravel adapters over the shared Organization access evaluator. Explicit tenant scope, constraints, binding, authorization ordering, and transaction semantics remain authoritative.
 
-Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. Identity migration and remaining domain/application extraction are future checkpoints, each requiring authorization.
+Acceptance: **same business behavior, HTTP API, frontend, database, and tenant/security semantics; different backend architecture**. The final cleanup/enforcement checkpoint remains unstarted and requires separate authorization.
 
 ## HTTP contract
 
@@ -100,7 +112,7 @@ The Roles & Permissions SPA route is `/app/organizations/{organizationId}/roles`
 
 Pest tests cover authentication, transaction rollback, PostgreSQL constraints, owner authorization, cross-tenant isolation, permission unions, revocation, RBAC constraints, and migration compatibility. Vitest covers client state and routing. Playwright exercises authentication, email verification, onboarding, refresh, a second user's access denial, and role creation/editing with persistence after refresh. Pint, Larastan, ESLint, Prettier, TypeScript checking, audits, and production build are local quality gates.
 
-The Architecture suite runs with backend quality without booting Laravel. Current controller/dependency/global-state checks are active; Organization Domain/Application checks now run with no skips; model/ambient-context guards include the module. They complement, rather than prove, authorization and tenant isolation. Characterization covers application-owned errors, denial-before-validation ordering, resource status/shape, scoped binding, policy/factory/Fortify resolution, and unverified `/me`. See [Phase 1.3.5 validation](../phases/phase-01-ddd-architecture-validation.md) for observed results and limitations.
+The Architecture suite runs with backend quality without booting Laravel. Current controller/dependency/global-state checks are active; Organization Domain/Application checks now run with no skips; model/ambient-context guards include both modules. Identity cannot depend on Organization; Organization can reference only the User persistence type through six explicitly listed existing consumers. They complement, rather than prove, authorization and tenant isolation. Characterization covers application-owned errors, denial-before-validation ordering, resource status/shape, scoped binding, policy/factory/Fortify resolution, and unverified `/me`. See [Phase 1.3.5 validation](../phases/phase-01-ddd-architecture-validation.md) for observed results and limitations.
 
 ## Deferred compatibility concerns
 

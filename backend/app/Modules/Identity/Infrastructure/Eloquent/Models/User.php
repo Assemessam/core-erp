@@ -1,29 +1,23 @@
 <?php
 
-namespace App\Models;
+namespace App\Modules\Identity\Infrastructure\Eloquent\Models;
 
-use App\Modules\Organization\Infrastructure\Eloquent\Models\OrganizationMembership;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
+use Illuminate\Database\Eloquent\Attributes\UseFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
+#[UseFactory(UserFactory::class)]
 #[Fillable(['name', 'email', 'password'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable implements MustVerifyEmail
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
-
-    /** @return HasMany<OrganizationMembership, $this> */
-    public function organizationMemberships(): HasMany
-    {
-        return $this->hasMany(OrganizationMembership::class);
-    }
 
     /**
      * Get the attributes that should be cast.
