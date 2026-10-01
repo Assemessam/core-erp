@@ -7,13 +7,13 @@ use App\Modules\Audit\Application\Exceptions\AuditWriteFailed;
 use App\Modules\Audit\Application\Vocabulary\AuditSubjectType;
 use App\Modules\Audit\Infrastructure\Persistence\DatabaseAuditRecorder;
 use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
-use App\Modules\Organization\Application\Commands\CreateOrganization;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\AuditFixtures;
+use Tests\Support\OrganizationFixtures;
 
 beforeEach(function () {
     $this->owner = User::factory()->create();
-    $this->organization = app(CreateOrganization::class)->handle($this->owner->id, 'Audit fixture');
+    $this->organization = OrganizationFixtures::unaudited($this->owner->id, 'Audit fixture');
     $this->actor = User::factory()->create();
     $this->entry = AuditFixtures::entry([
         'organizationId' => $this->organization->id,
@@ -97,7 +97,7 @@ it('rejects unsafe payloads before any audit insert and leaves earlier transacti
 });
 
 it('records system actors and independently scopes facts to the supplied tenant', function () {
-    $other = app(CreateOrganization::class)->handle($this->owner->id, 'Other tenant');
+    $other = OrganizationFixtures::unaudited($this->owner->id, 'Other tenant');
     app(AuditRecorder::class)->record($this->entry);
     app(AuditRecorder::class)->record(AuditFixtures::entry([
         'organizationId' => $other->id,
@@ -110,8 +110,4 @@ it('records system actors and independently scopes facts to the supplied tenant'
     expect($second->actor_type)->toBe('system');
     expect($second->actor_user_id)->toBeNull();
     expect($first->id)->not->toBe($second->id);
-});
-
-it('leaves existing organization workflows uninstrumented in checkpoint B', function () {
-    expect(DB::table('audit_events')->where('organization_id', $this->organization->id)->count())->toBe(0);
 });

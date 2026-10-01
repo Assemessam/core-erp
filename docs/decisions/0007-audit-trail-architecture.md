@@ -1,13 +1,13 @@
 # ADR 0007: Tenant-scoped audit recording with transactional, append-only persistence
 
-- Status: Accepted design; Phase 1.5B persistence/contracts implemented locally, awaiting review
+- Status: Accepted design; Phase 1.5B approved and committed; Phase 1.5C Organization/RBAC integration complete locally, awaiting review
 - Date: 2026-10-01
 
 ## Context and checkpoint boundary
 
 CoreERP's Identity and Organization contexts follow ADR 0005. Organization owns memberships, tenant RBAC and invitations under ADR 0006. Sensitive Organization mutations need attributable history; future approved business modules will need the same recording capability. Technical Laravel logs do not provide that history.
 
-Checkpoint B implements the recording contract, immutable input data, initial vocabulary, strict payload validation, PostgreSQL storage/protection, explicit provider wiring and tests. **No business command records audit events yet.** There is no audit permission, history query, HTTP route, Resource, Policy or frontend. Phase 1.5 is not complete. Later checkpoints require separate authorization.
+Checkpoint B established the recording contract, immutable input data, initial vocabulary, strict payload validation, PostgreSQL storage/protection, explicit provider wiring and tests. Checkpoint C instruments only CreateOrganization, RenameOrganization and SaveRole, emitting organization.created, organization.renamed, role.created and meaningful role.updated facts. Invitation/member lifecycle integration remains pending for D. There is no audit permission, history query, HTTP route, Resource, Policy or frontend. Phase 1.5 is not complete. Later checkpoints require separate authorization.
 
 ## Ownership and layers
 
@@ -32,7 +32,7 @@ interface AuditRecorder
 
 `AuditActor` and `AuditSubject` are readonly scalar/value structures. Actor vocabulary is a backed `AuditActorType` enum so null cannot silently imply a system actor. Subject accepts an integer/string and preserves its string representation; the validator then requires the identifier appropriate to its subject type.
 
-Future integration direction:
+Implemented producer direction:
 
 ```text
 Organization/future owning module Application
@@ -44,7 +44,9 @@ Audit Infrastructure
 
 Audit imports no Organization or Identity classes. Table foreign keys are intentional database integrity relationships, not permission to import foreign Eloquent models. Validation and persistence implementations are private. Other modules may not consume Audit Infrastructure, Presentation, Validation or exception implementation details.
 
-Later producers should build deliberate, named module-owned projections from scoped persisted records. The recorder validates shape and vocabulary, not actor authority or another module's subject existence/ownership. Those checks remain in the initiating use case. No producers are added in B.
+Producers build deliberate, named module-owned projections from scoped persisted records. The recorder validates shape and vocabulary, not actor authority or another module's subject existence/ownership. Those checks remain in the initiating use case. No producers were added in B.
+
+Checkpoint C uses one model-free Organization Application factory, `Auditing/OrganizationAuditEntries`. Its four named methods take explicit scalar business values and permission-key lists, never models, requests or arbitrary controller arrays. It normalizes permissions to sorted unique stable strings and returns null for a role update with no changed fields. Only the factory imports AuditActor, AuditEntry, AuditSubject, AuditAction and AuditSubjectType; the three commands import AuditRecorder. All eight imports are confined to the public Contracts/Data/Vocabulary namespaces. No Organization Domain, Infrastructure or Presentation code imports Audit.
 
 ## Transaction and failure semantics
 
@@ -52,9 +54,13 @@ Recording is explicit and synchronous. The recorder resolves the current default
 
 It generates a ULID and inserts explicit columns through Query Builder. It never creates a second connection, starts/commits a transaction, calls afterCommit, queues work or logs payloads. PostgreSQL supplies `created_at` with `clock_timestamp()`.
 
-Once producers are instrumented, business mutation and audit insert must commit together or both roll back. A validation/persistence failure propagates as a safe `AuditWriteFailed`; producers must not catch and ignore it. The exception has a fixed message and allowlisted diagnostic category, with no previous database exception. QueryException bindings and PostgreSQL failing-row details must not reach framework exception logging through a retained exception chain. Sensitive input parameters are marked with PHP's SensitiveParameter attribute.
+Instrumented business mutation and audit insert must commit together or both roll back. A validation/persistence failure propagates as a safe `AuditWriteFailed`; producers must not catch and ignore it. The exception has a fixed message and allowlisted diagnostic category, with no previous database exception. QueryException bindings and PostgreSQL failing-row details must not reach framework exception logging through a retained exception chain. Sensitive input parameters are marked with PHP's SensitiveParameter attribute.
 
-Later rename integration needs a transaction and a fresh locked row for truthful before values. Existing role/lifecycle/invitation transactions remain Application-owned. Invitation delivery stays after commit; an invitation-created fact does not assert successful SMTP delivery. A later mail failure leaves the committed invitation and audit fact intact.
+CreateOrganization records after organization and owner membership insertion in its existing transaction, using the explicit owner ID and persisted membership ID. RenameOrganization now authorizes, reloads by ID with FOR UPDATE, compares the authoritative name and records only a change inside one transaction. After success it synchronizes persisted attributes back into the supplied instance; stale/dirty caller attributes are never saved. A failed transaction leaves that instance untouched. A stale A / persisted B / requested C transition records B to C; requesting persisted B is a no-op.
+
+SaveRole retains its transaction, scoped role row lock, typed PermissionKey inputs, name trimming, unique-name conflict and HTTP 422 translation. Creation records after grants are synchronized. Update reads the locked persisted name/permissions, then records only changed fields after persistence. Equivalent normalized names/permission sets emit no fact. Audit failure restores a created role/grants or the prior name/grants; duplicate conflicts leave no successful fact. These facts describe explicit command workflows, not model observers or internal pivot writes.
+
+Existing lifecycle/invitation transactions remain Application-owned and uninstrumented in C. Future invitation delivery stays after commit; an invitation-created fact will not assert successful SMTP delivery. A later mail failure must leave the committed invitation and audit fact intact.
 
 The physical recording clock is not commit order. ULIDs and timestamps do not globally serialize concurrent business commands. There is no global audit write lock.
 
@@ -87,7 +93,7 @@ Action -> subject mapping is explicit. No arbitrary action string can enter Audi
 
 ## Version-one payload schemas
 
-Each snapshot is a JSON object or SQL null. At least one exists. Create uses null before, removal uses null after. Update snapshots contain matching changed fields, except deliberate result facts on invitation acceptance/replacement. No-op transitions are rejected by the recorder; later producers should skip recording them.
+Each snapshot is a JSON object or SQL null. At least one exists. Create uses null before, removal uses null after. Update snapshots contain matching changed fields, except deliberate result facts on invitation acceptance/replacement. No-op transitions are rejected by the recorder; producers skip recording them.
 
 | Action | Before | After |
 | --- | --- | --- |
@@ -164,8 +170,12 @@ Retain history indefinitely for current portfolio scope. No retention/deletion A
 
 Unit tests exercise all initial schemas and failures without Laravel. PostgreSQL Feature tests use the existing outer rollback transactions/savepoints to prove insert, rollback, FK/JSON/size constraints, timestamp/default/index structure and statement-level rejection. A no-fixture Integration test proves absent/stale physical transaction rejection. Migration down/up is tested inside the outer rollback; it is not audit-row deletion cleanup.
 
-No test-isolation helper, trigger disabling, audit DELETE cleanup or committed audit fixture is needed in B. Existing InvitationConcurrencyTest remains untouched because Organization commands do not emit audit yet. When later instrumentation makes its committed organization cleanup impossible, introduce defensive dedicated disposable-database support in that checkpoint. Keep backend database suites sequential and separate from browser writes.
+No test-isolation helper, trigger disabling, audit DELETE cleanup or committed audit fixture was needed in B. In C, normal command-based setup remains audited. Storage tests and the historical RBAC cascade test use deliberately unaudited direct persistence fixtures via a small test-only OrganizationFixtures helper. The invitation concurrency test uses that raw organization/owner-membership setup too: its uninstrumented invitation acceptance still permits identified fixture cleanup, without expanding database infrastructure in C. A separate C regression proves command-created organizations cannot be hard-deleted. No foreign keys or triggers are disabled, no audit rows are deleted and no recorder is globally replaced.
 
-Architecture checks enforce framework-free Audit Application, no Audit -> Organization/Identity imports, no Organization Domain -> Audit, private implementation isolation, no controller writes/transactions and caller-owned recorder transaction control. Runtime tests supplement static rules.
+Focused C Application tests assert exact persisted fact structures, trusted actor/subject identity, fresh locked before values, changed-field-only payloads, no-ops, duplicate failures and supplied-model return behavior. For each of the four paths, a narrow test-only recorder first proves writes precede recording and then throws; a second mode delegates to the real recorder, verifies a successful insert and deliberately fails before transaction completion. Both modes prove business rows/grants and audit inserts roll back together. Existing authorization and cross-tenant suites remain active. Backend database suites stay sequential and separate from browser writes.
 
-Approved later scope, not implemented: Organization/RBAC producers; invitation/membership producers; audit.view and authorized tenant history with a narrow Audit-owned authorization port implemented by Organization; newest-first created_at/id cursor pagination; minimal action/subject filters; safe Resource; view-local Vue Audit Trail and browser flow. No future business modules are created now.
+In D, committed invitation acceptance will create immutable history. Revisit the concurrency fixture cleanup then; use a defensive dedicated disposable test database if required, with explicit testing environment and dedicated naming checks that refuse development/production databases.
+
+Architecture checks enforce framework-free Audit Application, no Audit -> Organization/Identity imports, no Organization Domain -> Audit, an explicit Organization-to-Audit public namespace allowlist, no Organization delivery/infrastructure audit orchestration, private implementation isolation, no controller writes/transactions and caller-owned recorder transaction control. Runtime tests supplement static rules.
+
+Approved later scope, not implemented: invitation/membership producers; audit.view and authorized tenant history with a narrow Audit-owned authorization port implemented by Organization; newest-first created_at/id cursor pagination; minimal action/subject filters; safe Resource; view-local Vue Audit Trail and browser flow. C adds no migrations, permissions, API or frontend changes. No future business modules are created now.

@@ -1,15 +1,15 @@
 <?php
 
 use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
-use App\Modules\Organization\Application\Commands\CreateOrganization;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Tests\Support\OrganizationFixtures;
 
 beforeEach(function () {
     $this->owner = User::factory()->create();
-    $this->organization = app(CreateOrganization::class)->handle($this->owner->id, 'Audit integrity');
+    $this->organization = OrganizationFixtures::unaudited($this->owner->id, 'Audit integrity');
     // Separate from owner to prove audit's actor FK, not the pre-existing ownership FK.
     $this->actor = User::factory()->create();
     $this->auditValues = [

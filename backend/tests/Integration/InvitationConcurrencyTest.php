@@ -1,14 +1,15 @@
 <?php
 
 use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
-use App\Modules\Organization\Application\Commands\CreateOrganization;
 use App\Modules\Organization\Domain\Invitations\InvitationState;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\OrganizationFixtures;
 
 it('serializes two real PostgreSQL acceptance sessions and creates one membership', function () {
     $owner = User::factory()->create();
     $user = User::factory()->create();
-    $org = app(CreateOrganization::class)->handle($owner->id, 'Concurrency test');
+    // Test invitation locking, with deletable raw setup. Invitation commands are not audited until D.
+    $org = OrganizationFixtures::unaudited($owner->id, 'Concurrency test');
     $token = bin2hex(random_bytes(32));
     $invite = $org->invitations()->create(['email' => $user->email, 'inviter_user_id' => $owner->id, 'state' => InvitationState::Pending, 'expires_at' => now()->addDay(), 'token_hash' => hash('sha256', $token)]);
     $workers = [];

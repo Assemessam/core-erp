@@ -1,4 +1,8 @@
-# Phase 1.5B — Audit Persistence & Safety Contracts validation
+# Phase 1.5 — Audit Trail validation
+
+Current checkpoint: **1.5C Organization/RBAC integration complete locally, awaiting review**. B is approved and committed as `2675976`. The B results below are historical; the appended C record supersedes its integration status. Phase 1.5 is not complete and D has not begun.
+
+## Phase 1.5B — Audit Persistence & Safety Contracts (historical)
 
 Date: 2026-10-01. Status: implemented locally, awaiting review. Branch: `feature/audit-trail`. Nothing staged, committed or pushed; no branch switch/reset/discard. Phase 1.5C has not begun and Phase 1.5 is not complete.
 
@@ -133,3 +137,101 @@ Recommendation for separately authorized 1.5C: add module-owned Organization pro
  docs/phases/phase-01-core-platform.md         |  4 +--
  5 files changed, 51 insertions(+), 5 deletions(-)
 ```
+
+## Phase 1.5C — Organization & RBAC Audit Integration
+
+Date: 2026-10-01. Status: complete locally, awaiting review. Started clean on `feature/audit-trail`, with approved B commit `2675976 feat: add immutable audit persistence foundation`. No staging, commit, push, branch change, reset or discard. Only C is implemented; D and later API/UI checkpoints remain pending.
+
+### Inspection and baseline
+
+Read AGENTS.md, ADRs 0005/0007 and the existing validation record; inspected Audit input/vocabulary/validator/recorder, OrganizationAccess/models, CreateOrganization/RenameOrganization/SaveRole, Organization/RBAC/Application/security tests, migration compatibility and committed invitation concurrency cleanup. All five Compose services were already healthy. Baseline `docker compose exec -T backend composer quality`: **290 passed / 1,613 assertions**, Pint 134 files and Larastan level 8 clean.
+
+### Factory and public dependency inventory
+
+One Organization-owned, model-free `Application/Auditing/OrganizationAuditEntries` exposes organizationCreated, organizationRenamed, roleCreated and roleUpdated. Inputs are explicit scalar business values and string permission lists. It constructs readonly Audit entries with deliberate field projections, sorts/deduplicates permissions and returns null when role update fields are unchanged. Audit remains responsible for validation/persistence; Organization remains responsible for authorization and subject scope.
+
+All Organization-to-Audit imports, checked with `rg -n '^use App\\Modules\\Audit' backend/app/Modules/Organization`:
+
+| Organization consumer | Audit dependency |
+| --- | --- |
+| CreateOrganization, RenameOrganization, SaveRole | Application/Contracts/AuditRecorder (one import each) |
+| OrganizationAuditEntries | Application/Data/AuditActor, AuditEntry, AuditSubject |
+| OrganizationAuditEntries | Application/Vocabulary/AuditAction, AuditSubjectType |
+
+Eight imports / six distinct public types. No Audit internals, foreign Eloquent types, table access, ambient actor/tenant or request serialization enters Organization auditing. No Audit module production file was changed.
+
+### Command behavior and exact persisted facts
+
+CreateOrganization retains its existing transaction, creates the owner membership, then records exactly one organization.created fact using the trusted owner and actual persisted owner membership ID. Rename now owns a transaction and reloads/locks the authoritative organization row by ID. Stale supplied A / persisted B / requested C records B to C, never A to C. No-op comparison uses B. The same supplied model instance is returned, with persisted attributes synchronized only after success; dirty ownership is never saved.
+
+SaveRole retains scoped lookup/locking, owner-only persisted authorization, trimmed names, typed PermissionKey inputs, grants synchronization and PostgreSQL duplicate-name translation. Creation records after role/grants persistence. Update captures fresh locked name and persisted permissions, then projects only changed fields. Names and permission sets are compared consistently; equivalent trimmed names and sorted unique grants emit no role.updated. Duplicate create/update failure emits no successful fact and preserves HTTP 422.
+
+All four paths persist tenant ID, user actor type/trusted ID, stable action, subject type/persisted ID, payload_version=1, a generated ULID and database recording timestamp. Snapshot fields are exact:
+
+| Action | Before | After |
+| --- | --- | --- |
+| organization.created | null | name, owner_user_id, owner_membership_id |
+| organization.renamed | name | changed persisted name |
+| role.created | null | trimmed persisted name, sorted unique permissions |
+| role.updated | changed name and/or permissions only | matching keys, each changed |
+
+No email, credentials, invitation data, HTTP metadata or model dumps. No ownership-bootstrap or pivot-internal duplicate events. OrganizationAccess, external API/resources/status codes, controllers and Policies remain unchanged.
+
+### Atomicity, security and test fixtures
+
+The 24 new Application cases cover exact rows for all facts; explicit/delegated actors despite unrelated sessions; forged HTTP attribution and prohibited owner fields; authoritative stale state for both rename and role; name-only, permissions-only, combined and empty-permission changes; no-ops; duplicate failures; direct unauthorized/cross-tenant attempts; supplied-instance compatibility and audited organization deletion restriction.
+
+Eight failure cases cover all four command paths in two modes. A local test-only recorder throws AuditWriteFailed after checking business changes already exist in the caller transaction. A decorator mode calls the real DatabaseAuditRecorder, asserts its successful INSERT and deliberately throws before command transaction completion. Both modes prove rollback of organization/owner membership, rename, role creation/grants or role name/grants update, plus audit history. Production failures propagate; no production hook, no-op adapter, best-effort catch, queue, observer or afterCommit write exists. Recorder live-transaction checks are unchanged.
+
+Most existing setup keeps calling the real audited commands. Narrow exceptions use the new test-only OrganizationFixtures::unaudited helper: Audit storage/integrity fixtures, the historical RBAC cascade test and invitation concurrency setup. Cascade roles also use raw persistence so its original organization deletion intent remains valid. The obsolete B assertion that command creation emits no event was replaced by C success coverage. A separate C test proves audited creation now restricts organization hard deletion.
+
+Feature tests retain DatabaseTransactions and nested savepoints; no PHPUnit/database configuration changed. Invitation concurrency still runs two real PostgreSQL acceptance sessions, observes both waiting and verifies one acceptance plus one replay rejection, then cleans only its raw identified fixtures. Invitation acceptance is uninstrumented in C. No disposable database infrastructure was needed. No FK/trigger disabling or audit deletion cleanup occurs. Revisit safe dedicated disposable databases in D when committed acceptance starts retaining history. Database suites ran sequentially, separately from browser writes. Mandatory stale-state tests pass; no new competing-process rename/role test was added.
+
+### Architecture and documentation
+
+Architecture adds an explicit Organization-to-Audit Contracts/Data/Vocabulary namespace allowlist and rejects any Audit dependency in Organization Infrastructure/Presentation; Domain stays Audit-independent. Private Audit isolation and all prior rules remain. Audit still has no Domain, Eloquent model, Presentation or query layer, and recorder transaction control is unchanged.
+
+ADR 0005 narrowly explains why single-write rename now needs an atomic business-write/audit-insert transaction under ADR 0007. ADR 0007 records implemented C projections, locks, no-ops, failures and fixture decisions. System overview, roadmap and README now describe B as approved/committed, C as integrated locally, and D/history API/UI as pending. This validation file preserves B's historical results and appends C. Phase 1.5 is not marked complete.
+
+### Commands and final results
+
+Commands ran from repository root; final results supersede intermediate corrections.
+
+| Command | Result |
+| --- | --- |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Application/Auditing --compact` | **24 passed / 278 assertions** |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Audit tests/Unit/Audit tests/Integration/AuditTransactionRequirementTest.php --compact` | **133 passed / 316 assertions** |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Application tests/Feature/OrganizationsTest.php tests/Feature/RbacTest.php tests/Feature/OrganizationUsersTest.php tests/Feature/OrganizationUsersIntegrityTest.php tests/Integration/InvitationConcurrencyTest.php --compact` | **110 passed / 883 assertions**, including C cases |
+| `docker compose exec -T backend php vendor/bin/pest tests/Architecture --compact` | **23 passed / 339 assertions** |
+| `docker compose exec -T backend composer quality` | **315 passed / 1,895 assertions**, no skips; Pint 137 files; Larastan level 8, 92 files, clean |
+| `docker compose exec -T backend composer format` | Formatting applied only to C PHP changes; final Pint passed |
+| `docker compose exec -T backend composer analyse` | Clean, without suppressions |
+| `docker compose exec -T backend composer dump-autoload --optimize --strict-psr` | Passed, 9,093 classes |
+| `docker compose exec -T backend composer validate --strict` | Valid |
+| `docker compose exec -T backend composer check-platform-reqs` | All requirements passed |
+| `docker compose exec -T backend composer audit` | No security vulnerability advisories |
+| `docker compose exec -T frontend npm run quality` | ESLint, Prettier, TypeScript, **9 Vitest files / 45 tests**, production build (122 modules) passed |
+| `docker compose exec -T frontend npm audit` | Zero vulnerabilities |
+| `docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test` | **4 passed**, existing authentication, isolation, RBAC and real-Mailpit membership lifecycle flows |
+| `docker compose config --quiet`, `docker compose ps` | Valid; all five services healthy |
+| `docker compose exec -T postgres pg_isready -U coreerp -d coreerp` | Accepting connections |
+| `docker compose exec -T redis redis-cli ping` | PONG |
+| `curl -fsS http://localhost:8088/api/v1/ready` | HTTP 200, status ok |
+| `curl -fsS http://localhost:5174/api/v1/ready` | HTTP 200, proxy status ok |
+| `curl -fsS http://localhost:8026/api/v1/info` | HTTP 200, Mailpit reachable |
+| `docker compose exec -T backend php artisan migrate:status` | All five existing migrations Ran, audit migration batch 5 |
+| `git diff --check` | Passed |
+| `git diff -- backend/database/migrations`, `git diff -- frontend` | Both empty |
+| `git diff --cached --stat` | Empty, nothing staged |
+
+Initial combined focused invocation repeated a parent/child test path; reran with disjoint paths. One HTTP test correction preserved the existing prohibited owner_user_id behavior. Larastan required typed persisted Permission mapping plus array_values to establish list<string>; resolved without suppressions. Final quality has no failing gate.
+
+### Changed files, manual review and stop point
+
+Created three PHP files: OrganizationAuditEntries, OrganizationAuditIntegrationTest and OrganizationFixtures. Modified the three audited commands; BoundariesTest; AuditPersistenceTest/AuditIntegrityTest; RbacTest; InvitationConcurrencyTest; ADRs 0005/0007; system overview; roadmap; this validation record; README. No migration, permission catalog, Audit production, Identity production, OrganizationAccess, HTTP adapter, invitation/lifecycle command, frontend source, dependency lock or environment change.
+
+Review the fresh locked-state snapshots, rename's post-success supplied-instance synchronization, changed-field-only role projection, sorted unique permissions, trusted actors/scoped subjects and the intentional audited-organization deletion restriction. Raw fixtures are confined to tests of storage/historical cascades/committed uninstrumented invitation locking. Browser-created audit history is retained normally; it is not deleted as cleanup.
+
+Limitations remain: privileged SQL can bypass command instrumentation or fabricate facts; administrators can bypass storage protections; free-text names cannot universally detect embedded secrets; production privilege separation/load/deployment/retention are unverified. No read API/history-access claim, audit.view, frontend history or production deployment is included. Existing sequential database constraints and deferred operational/UX/CORS issues remain.
+
+Recommend separately authorized **1.5D Invitation & Membership Lifecycle audit integration**: extend deliberate module-owned projections and existing command transactions, preserve credential/email exclusions and mail-after-commit semantics, prove rollback/no-op/reinvite facts, and address committed invitation concurrency test isolation before auditing acceptance. **Stop here; D has not begun.**

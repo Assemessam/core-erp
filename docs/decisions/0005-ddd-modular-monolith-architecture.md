@@ -65,7 +65,7 @@ Pass actor and organization context explicitly. Never use an ambient/global acti
 
 ## Transactions and route-model binding
 
-Application owns transaction boundaries. Preserve organization-plus-owner-membership creation, SaveRole's atomic name/grants update and row lock, rollback behavior, and specific duplicate-name conflict handling. A single-row rename needs no ceremonial transaction. Defer a transaction abstraction until a real use case requires it. Repositories/domain objects do not independently commit; required workflows must not hide in model observers. Concurrency semantics remain unchanged.
+Application owns transaction boundaries. Preserve organization-plus-owner-membership creation, SaveRole's atomic name/grants update and row lock, rollback behavior, and specific duplicate-name conflict handling. Before audit integration, the single-row rename needed no ceremonial transaction. Under [ADR 0007](0007-audit-trail-architecture.md), Phase 1.5C adds a mandatory audit insert: rename now needs a transaction and a freshly locked organization row so the business write and truthful audit snapshot commit atomically. The conditions changed; the original single-write decision remains appropriate to its checkpoint. Defer a transaction abstraction until a real use case requires it. Repositories/domain objects do not independently commit; required workflows must not hide in model observers.
 
 Keep current Eloquent route-model binding as a Presentation adapter. Preserve parameter names, `scopeBindings()`, and Organization's roles relationship. Binding does not authorize access. Later application entry points may take identifiers without forcing controller bindings to change. Future pure aggregates must not implement route binding.
 

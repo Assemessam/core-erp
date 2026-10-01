@@ -53,6 +53,18 @@ arch('Audit Application is framework independent')
 arch('Organization Domain does not depend on Audit')
     ->expect('App\\Modules\\Organization\\Domain')->not->toUse('App\\Modules\\Audit');
 
+arch('Organization consumes only the public Audit producer namespaces')
+    ->expect('App\\Modules\\Organization')->not->toUse('App\\Modules\\Audit')
+    ->ignoring([
+        'App\\Modules\\Audit\\Application\\Contracts',
+        'App\\Modules\\Audit\\Application\\Data',
+        'App\\Modules\\Audit\\Application\\Vocabulary',
+    ]);
+
+arch('Organization delivery and infrastructure do not orchestrate audit facts')
+    ->expect(['App\\Modules\\Organization\\Presentation', 'App\\Modules\\Organization\\Infrastructure'])
+    ->not->toUse('App\\Modules\\Audit');
+
 $appDirectory = dirname(__DIR__, 2).'/app';
 $moduleDirectories = glob($appDirectory.'/Modules/*', GLOB_ONLYDIR) ?: [];
 $controllerNamespaces = ['App\\Http\\Controllers'];
@@ -70,7 +82,7 @@ it('has no obsolete global business directories', function () use ($appDirectory
     }
 });
 
-it('keeps checkpoint B audit layers limited to contracts and persistence', function () use ($appDirectory) {
+it('keeps checkpoint C audit layers limited to contracts and persistence', function () use ($appDirectory) {
     foreach (['Domain', 'Presentation', 'Infrastructure/Eloquent', 'Application/Queries'] as $directory) {
         expect(is_dir($appDirectory.'/Modules/Audit/'.$directory))->toBeFalse();
     }

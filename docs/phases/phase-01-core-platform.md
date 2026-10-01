@@ -1,6 +1,6 @@
 # Phase 1 — Core platform
 
-**1.4 Organization Users, Membership Lifecycle & Invitations** is implemented locally, awaiting review. Phases 1.0–1.3.5 are completed baselines. See [Phase 1.4 validation](phase-01-organization-users-validation.md) and [ADR 0006](../decisions/0006-organization-membership-lifecycle-and-invitations.md). **Phase 1.5B persistence/contracts only** is implemented locally, awaiting review; audit producer integration and read API/UI remain unimplemented. See [ADR 0007](../decisions/0007-audit-trail-architecture.md) and [audit validation](phase-01-audit-trail-validation.md).
+**1.4 Organization Users, Membership Lifecycle & Invitations** is implemented locally, awaiting review. Phases 1.0–1.3.5 are completed baselines. See [Phase 1.4 validation](phase-01-organization-users-validation.md) and [ADR 0006](../decisions/0006-organization-membership-lifecycle-and-invitations.md). **Phase 1.5B persistence/contracts is approved and committed. Phase 1.5C Organization/RBAC audit integration is complete locally, awaiting review.** Invitation/member lifecycle producers and read API/UI remain pending. Phase 1.5 is not complete. See [ADR 0007](../decisions/0007-audit-trail-architecture.md) and [audit validation](phase-01-audit-trail-validation.md).
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
@@ -10,7 +10,7 @@
 | **1.3 RBAC** | Membership-scoped roles, application permissions, policies, tenant constraints, and role administration | **Complete** |
 | **1.3.5 DDD Modular Monolith Refactor** | Establish bounded contexts, pragmatic Application boundaries, CQRS-lite, and architecture guardrails while preserving behavior | **Complete locally; awaiting review** |
 | **1.4 User invitations / organization users** | Verified email-bound invitations, active/suspended membership, owner-managed roles and lifecycle, tenant constraints | **Implemented locally; awaiting review** |
-| 1.5 Audit trail | Record relevant security and domain activity | B persistence/contracts only; integration/API/UI pending |
+| 1.5 Audit trail | Record relevant security and domain activity | B approved/committed; C Organization/RBAC integrated locally; D lifecycle and later API/UI pending |
 | 1.6 Notifications and queues | Notification delivery and asynchronous execution | Planned; not implemented |
 | 1.7 Real-time foundation | Authenticated real-time transport and event boundaries | Planned; not implemented |
 | 1.8 Security and tenant-isolation hardening | Adversarial isolation tests and security review | Planned; not implemented |

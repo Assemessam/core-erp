@@ -14,6 +14,7 @@ use App\Modules\Organization\Infrastructure\Eloquent\Models\Permission;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\OrganizationFixtures;
 
 function rbacOrganization(?User $owner = null): Organization
 {
@@ -197,8 +198,10 @@ it('enforces RBAC uniqueness references and application-defined keys in PostgreS
 });
 
 it('cascades dependent links intentionally without deleting permissions or unrelated roles', function () {
-    $organization = rbacOrganization();
-    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Disposable', PermissionKey::RolesView);
+    // Historical cascade mechanics require deliberately unaudited organization and role fixtures.
+    $organization = OrganizationFixtures::unaudited(User::factory()->create()->id, 'RBAC cascades');
+    $role = $organization->roles()->create(['name' => 'Disposable']);
+    $role->permissions()->sync([PermissionKey::RolesView->value]);
     $member = $organization->memberships()->create(['user_id' => User::factory()->create()->id]);
     app(AssignMembershipRole::class)->handle($member, $role);
     $member->delete();
@@ -207,7 +210,8 @@ it('cascades dependent links intentionally without deleting permissions or unrel
     $role->delete();
     expect(DB::table('organization_membership_role')->where('role_id', $role->id)->count())->toBe(0);
     expect(DB::table('role_permission')->where('role_id', $role->id)->count())->toBe(0);
-    $role = app(SaveRole::class)->handle($organization->owner_user_id, $organization, null, 'Cascade', PermissionKey::RolesView);
+    $role = $organization->roles()->create(['name' => 'Cascade']);
+    $role->permissions()->sync([PermissionKey::RolesView->value]);
     app(AssignMembershipRole::class)->handle($organization->memberships()->sole(), $role);
     $organization->delete();
     DB::statement('SET CONSTRAINTS organizations_owner_membership_foreign IMMEDIATE');
