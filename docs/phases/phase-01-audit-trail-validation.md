@@ -1,6 +1,6 @@
 # Phase 1.5 — Audit Trail validation
 
-Current checkpoint: **1.5E Authorized Audit Query API complete locally, awaiting review**. B/C/D are approved and committed as `2675976` / `c040582` / `91b0725`. Their results below are historical; the appended E record supersedes their API status. Phase 1.5 is not complete and F has not begun.
+Current checkpoint: **1.5F Audit Trail UI & Browser Flow complete locally, awaiting review**. B/C/D/E are approved and committed as `2675976` / `c040582` / `91b0725` / `904c04d`. Earlier records are historical; E's narrow checked-in Playwright contract correction passed targeted 1 / complete 4 before its commit. The F record below supersedes earlier pending-UI and stale-assertion status. Phase 1.5 is not marked complete and no later milestone has begun.
 
 ## Phase 1.5B — Audit Persistence & Safety Contracts (historical)
 
@@ -427,3 +427,55 @@ Temporary harness attempts initially failed before test execution because a nest
 Review adapter binding/exception propagation, fresh authorization before query validation, mandatory SQL predicate and grouped cursor, precise resource/empty-object representation, permission migration down order, explicit audit.view payload vocabulary and show-only metadata. Cursor is not signed and pagination is a live view: concurrent newer inserts are seen on first-page refresh, not an export snapshot. Already-authorized requests can finish during concurrent revocation. Read throttle/representative production-volume plans and deployment privilege separation remain deferred. Privileged SQL still can fabricate facts; no new tamper-proof/completeness claim. Retention, actor deletion and immutable storage protections are unchanged.
 
 Recommend separately authorized **1.5F — Audit Trail UI & Browser Flow**, using show capability, this cursor contract, view-local results, stable actor IDs and payload-version handling with browser authorization/isolation tests. **Stop after E; F has not begun.**
+
+## Phase 1.5F — Audit Trail UI & Browser Flow
+
+Date: 2026-10-02. Status: complete locally, awaiting review. Started from clean feature/audit-trail at 904c04d, the committed E API and checked-in Playwright contract correction. E's corrected targeted/full browser results were 1/4 passed; its backend and frontend baselines were 469/45 tests. No staging/commit/push/branch switch/reset/discard. Only F UI/browser flow is implemented; no later milestone or deferred Phase 1.4 UX change.
+
+### Inspected boundary and implementation
+
+Inspected AGENTS.md, ADR 0007/current validation, Organization SHOW capability and audit contract, router/auth guards, API/error clients, organization store/workspace, role/member views and existing Vitest/real Mailpit Playwright conventions. Backend authorization/persistence/migrations remain unchanged. The initial npm baseline command overlapped the first workspace edit and reported an outdated get mock; it was not treated as an unchanged-code baseline. Final comprehensive results below supersede intermediate runs.
+
+Added GET-only typed frontend audit client/vocabulary/formatting and OrganizationAuditView. Protected route /app/organizations/:organizationId/audit uses existing authenticated/verified guards. Organization API adds a context reader preserving SHOW data/meta; workspace reads this response into local refs and displays Audit Trail only for exact boolean can_view_audit=true. Workspace name and capability share the same current response, avoiding a second lookup or stale shared selection. Existing Pinia onboarding/list behavior is retained; no audit responses/cursors go into Pinia or browser storage.
+
+Audit view reads fresh SHOW context, then independently authorized audit history. Initial load, Refresh and filters restart at the first page. Load more sends the opaque cursor unchanged with the same applied filters, fixed per_page=25 and explicit encoded organization identifier. No actor/name/email query, total count, page numbers, arbitrary filters, export or mutation client. Draft filters stay separate from applied ones; paired subject inputs are checked locally and detailed ID/action validation remains server-owned.
+
+History displays readable labels for all eleven actions, User #ID or System, subject type/ID, UTC time with canonical timestamp in datetime/title and native expandable Before/After tables. Version-1 snapshots render only approved scalar/string-list fields with Vue escaping. Unknown fields are not dumped; unknown versions retain headers and a details-unavailable message. No v-html, raw model/JSON dumps, actor PII enrichment or invitation credentials.
+
+Request-generation checks reset rows/context/cursor on tenant change and ignore late context/history/continuation successes or denials, also after unmount. Initial/loading/empty/error/validation/end states are explicit. 401/403/404 erase previously loaded history and cursor; 404 also erases organization context. Session loss offers sign-in. A generic failed continuation retains prior successful rows/cursor for retry. Refresh rechecks role revocation/grant and membership state; there is no permission polling or background synchronization. Browser reload resets filter/page state; Refresh retains applied filters.
+
+### Coverage and visual verification
+
+New OrganizationAudit Vitest tests cover loading/projections/UTC, cursor append/end, action/subject filters, clear/refresh, pair and server validation, empty history, absent capability, 401/403/404 data clearing despite prior capability, continuation retry, late tenant responses/denials, safe HTML-like text, arbitrary-field exclusion, System and unknown-version fallback. Workspace tests add capability hiding and late-context isolation; router test covers guest/unverified/verified Audit navigation. Existing workspace test now asserts its SHOW context contract.
+
+New real browser audit flow creates an organization and 29 authorized audited renames over the normal API (no raw audit fixtures), verifies 25+5 pagination with 30 unique event IDs, before/after details, exact action/subject filtering, Refresh and reload. It creates a second owned organization, proves no A detail appears in B and A subject filter gives an empty B result, then exercises guest login, unverified verification and verified outsider 404 with no history. Desktop 1280px/mobile 390px screenshots were visually inspected; mobile document width does not overflow. Explicit labels associate filter controls; native disclosure/tables/status/alert semantics remain accessible.
+
+Extended the existing actual Mailpit invitation/member browser flow: grant audit.view alongside members.view; accepted member sees history without invitation email; owner revokes audit.view through Roles, member Refresh clears history, direct API returns 403 and workspace navigation disappears; regrant restores access; suspension hides Audit (404), reactivation returns retained history including the activation fact, removal hides it again. Existing membership/role/authentication flows remain green.
+
+Intermediate corrections were test-only recipient case normalization (Identity normalizes email), a stale-value assertion accidentally matching the table's Before heading, and explicit filter labels after exact Playwright label lookup included option text. No backend workaround, weakened authorization or timeout increase. All final suites below pass.
+
+### Final checks
+
+| Command | Result |
+| --- | --- |
+| docker compose exec -T frontend npm run quality | **61 passed / 10 files**; ESLint, Prettier, TypeScript and production build passed (125 modules) |
+| docker compose exec -T frontend npm audit | Zero vulnerabilities |
+| docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -v /tmp/coreerp-audit-f-browser-artifacts:/tmp/coreerp-playwright-results -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test e2e/audit.spec.ts | **1 passed** targeted owner/pagination/isolation flow |
+| Same Playwright runner, existing organization-users.spec.ts | **1 passed**, including grant/revoke/suspend/reactivate/remove Audit assertions |
+| Same Playwright runner, npx playwright test | **5 passed / 0 failed**, complete checked-in suite |
+| docker compose exec -T backend php vendor/bin/pest tests/Unit/Audit/AuditQueryValidatorTest.php tests/Feature/Audit/AuditPermissionMigrationTest.php tests/Feature/Audit/AuditHistoryTest.php tests/Architecture --compact | **125 passed / 835 assertions**; Audit API/security/migration plus architecture regression |
+| docker compose config --quiet; docker compose ps | Valid; all five services healthy |
+| docker compose exec -T postgres pg_isready -U coreerp -d coreerp; docker compose exec -T redis redis-cli ping | Accepting connections / PONG |
+| curl -fsS http://localhost:8088/api/v1/ready; curl -fsS http://localhost:5174/api/v1/ready | API and frontend proxy status ok |
+| docker compose exec -T backend php artisan migrate:status | Existing six migrations Ran; E batch 6; no F migration |
+| git diff --check; git diff -- backend; git diff --cached --stat | Clean; backend empty; nothing staged |
+
+No complete backend/Pint/Larastan rerun was needed for this frontend-only checkpoint; E's complete 469-test/quality baseline is committed and focused backend security/architecture checks passed above. Backend database tests and browser writes ran sequentially, never overlapping. Browser-created history is retained normally; no audit DELETE/trigger/FK bypass or business-row cleanup was introduced. No dependency/lock/config/Compose changes.
+
+### Files, review and limitations
+
+Created frontend/src/lib/audit.ts, frontend/src/views/OrganizationAuditView.vue, frontend/src/__tests__/OrganizationAudit.test.ts and frontend/e2e/audit.spec.ts. Modified frontend organization context client/workspace/router, OrganizationsFlow/AuthRouting tests and organization-users browser spec. Updated ADR 0007, overview, roadmap, README and this validation record. No backend file changed.
+
+Review capability-only navigation versus independent API enforcement, paired/draft filters and cursor preservation/reset, tenant generation guards, removal of displayed rows after denial, finite snapshot display/version fallback and keyboard/mobile behavior. Actor names/email are intentionally absent. Loaded pages grow only on explicit Load more and reset on Refresh/filter/tenant change; high-volume virtualization/export is deferred. Unknown versions show headers without interpreted changes. Filters are not persisted across a reload. Access is rechecked on requests rather than continuously while an idle page displays previously authorized records. Previously deferred production privileges/rate limiting/high-volume/retention decisions remain unchanged.
+
+F is complete locally and ready for review. Phase 1.5 is not marked complete until approved; no subsequent milestone is started. Nothing staged or committed.

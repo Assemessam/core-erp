@@ -1,6 +1,6 @@
 # Phase 1 — Core platform
 
-**1.4 Organization Users, Membership Lifecycle & Invitations** is implemented locally, awaiting review. Phases 1.0–1.3.5 are completed baselines. See [Phase 1.4 validation](phase-01-organization-users-validation.md) and [ADR 0006](../decisions/0006-organization-membership-lifecycle-and-invitations.md). **Phase 1.5B/C/D are approved and committed. Phase 1.5E Authorized Audit Query API is complete locally, awaiting review.** All eleven approved mutation facts are integrated; authorized bounded history API is implemented; F frontend remains pending. Phase 1.5 is not complete. See [ADR 0007](../decisions/0007-audit-trail-architecture.md) and [audit validation](phase-01-audit-trail-validation.md).
+**1.4 Organization Users, Membership Lifecycle & Invitations** is implemented locally, awaiting review. Phases 1.0–1.3.5 are completed baselines. See [Phase 1.4 validation](phase-01-organization-users-validation.md) and [ADR 0006](../decisions/0006-organization-membership-lifecycle-and-invitations.md). **Phase 1.5B/C/D/E are approved and committed. Phase 1.5F Audit Trail UI & Browser Flow is complete locally, awaiting review.** All eleven approved mutation facts are integrated; authorized bounded history API and read-only Audit Trail UI are implemented. Phase 1.5 is not complete. See [ADR 0007](../decisions/0007-audit-trail-architecture.md) and [audit validation](phase-01-audit-trail-validation.md).
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
@@ -10,7 +10,7 @@
 | **1.3 RBAC** | Membership-scoped roles, application permissions, policies, tenant constraints, and role administration | **Complete** |
 | **1.3.5 DDD Modular Monolith Refactor** | Establish bounded contexts, pragmatic Application boundaries, CQRS-lite, and architecture guardrails while preserving behavior | **Complete locally; awaiting review** |
 | **1.4 User invitations / organization users** | Verified email-bound invitations, active/suspended membership, owner-managed roles and lifecycle, tenant constraints | **Implemented locally; awaiting review** |
-| 1.5 Audit trail | Record relevant security and domain activity | B/C/D approved/committed; E query API complete locally; F UI pending |
+| 1.5 Audit trail | Record relevant security and domain activity | B/C/D/E approved/committed; F UI/browser flow complete locally, awaiting review |
 | 1.6 Notifications and queues | Notification delivery and asynchronous execution | Planned; not implemented |
 | 1.7 Real-time foundation | Authenticated real-time transport and event boundaries | Planned; not implemented |
 | 1.8 Security and tenant-isolation hardening | Adversarial isolation tests and security review | Planned; not implemented |

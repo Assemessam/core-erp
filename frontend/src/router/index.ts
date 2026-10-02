@@ -13,8 +13,15 @@ import VerificationRequiredView from '../views/VerificationRequiredView.vue'
 import OrganizationsView from '../views/OrganizationsView.vue'
 import OrganizationWorkspaceView from '../views/OrganizationWorkspaceView.vue'
 import OrganizationRolesView from '../views/OrganizationRolesView.vue'
+import OrganizationAuditView from '../views/OrganizationAuditView.vue'
 
 export const routes = [
+  {
+    path: '/app/organizations/:organizationId/audit',
+    name: 'organization-audit',
+    component: OrganizationAuditView,
+    meta: { requiresAuth: true, requiresVerified: true },
+  },
   {
     path: '/invitations/:invitationId/accept',
     name: 'accept-invitation',

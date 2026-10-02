@@ -5,6 +5,11 @@ export interface Organization {
   name: string
 }
 
+export interface OrganizationContext {
+  data: Organization
+  meta: { can_view_audit: boolean }
+}
+
 export const organizationApi = {
   async list(): Promise<Organization[]> {
     const response = await api.get<{ data: Organization[] }>('/organizations')
@@ -23,5 +28,12 @@ export const organizationApi = {
       `/organizations/${encodeURIComponent(id)}`,
     )
     return response.data.data
+  },
+
+  async context(id: string): Promise<OrganizationContext> {
+    const response = await api.get<OrganizationContext>(
+      `/organizations/${encodeURIComponent(id)}`,
+    )
+    return response.data
   },
 }

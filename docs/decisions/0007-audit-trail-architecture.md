@@ -1,13 +1,13 @@
 # ADR 0007: Tenant-scoped audit recording with transactional, append-only persistence
 
-- Status: Accepted design; Phase 1.5B/C/D approved and committed; Phase 1.5E Authorized Audit Query API complete locally, awaiting review
+- Status: Accepted design; Phase 1.5B/C/D/E approved and committed; Phase 1.5F UI/browser flow complete locally, awaiting review
 - Date: 2026-10-01
 
 ## Context and checkpoint boundary
 
 CoreERP's Identity and Organization contexts follow ADR 0005. Organization owns memberships, tenant RBAC and invitations under ADR 0006. Sensitive Organization mutations need attributable history; future approved business modules will need the same recording capability. Technical Laravel logs do not provide that history.
 
-Checkpoint B established the recording contract, immutable input data, initial vocabulary, strict payload validation, PostgreSQL storage/protection, explicit provider wiring and tests. Checkpoint C instruments only CreateOrganization, RenameOrganization and SaveRole, emitting organization.created, organization.renamed, role.created and meaningful role.updated facts. Checkpoint D instruments the seven invitation/member lifecycle commands, completing the eleven approved mutation facts. Checkpoint E adds audit.view, the authorized bounded read API and show-only capability metadata. There is no Audit Policy or frontend. Phase 1.5 is not complete; F requires separate authorization.
+Checkpoint B established the recording contract, immutable input data, initial vocabulary, strict payload validation, PostgreSQL storage/protection, explicit provider wiring and tests. Checkpoint C instruments only CreateOrganization, RenameOrganization and SaveRole, emitting organization.created, organization.renamed, role.created and meaningful role.updated facts. Checkpoint D instruments the seven invitation/member lifecycle commands, completing the eleven approved mutation facts. Checkpoint E adds audit.view, the authorized bounded read API and show-only capability metadata. There is no Audit Policy. Authorized checkpoint F adds the read-only Vue UI/browser flow below. Phase 1.5 is not marked complete pending review.
 
 ## Ownership and layers
 
@@ -186,7 +186,7 @@ D Application tests assert every new fact, sorted persisted role sets, fresh-sta
 
 Architecture checks enforce framework-free Audit Application, no Audit -> Organization/Identity imports, no Organization Domain -> Audit, an explicit Organization-to-Audit public namespace allowlist, no Organization delivery/infrastructure audit orchestration, private implementation isolation, no controller writes/transactions and caller-owned recorder transaction control. Runtime tests supplement static rules.
 
-E implements the approved audit.view, authorization port, tenant history query, created_at/id cursor, action/subject filters and safe Resource below. The view-local Vue Audit Trail and browser flow remain pending F. C/D added no migrations, permissions, API or frontend changes. No future business modules are created now.
+E implements the approved audit.view, authorization port, tenant history query, created_at/id cursor, action/subject filters and safe Resource below. F adds the view-local Vue Audit Trail and browser flow below. C/D added no migrations, permissions, API or frontend changes. No future business modules are created now.
 
 
 ## Phase 1.5E — Authorized history read API
@@ -215,4 +215,23 @@ No suitable general authenticated read throttle exists; the current throttles co
 
 Tests cover the HTTP/direct authorization matrix, persisted-state/ownership checks, malformed-input non-disclosure, immediate permission revocation, retained-role suspension/reactivation, exact resources and actual invitation redaction, system/future-version representation, empty/filter results, cross-tenant cursor and subject replay, explicit SQL projection/bounds, and deterministic three-page timestamp ties with no gaps/duplicates. Fixtures INSERT explicit times and never UPDATE immutable events. Architecture checks retain framework-independent Audit Application and prohibit foreign imports, presentation persistence, read-side mutation and unauthorized Organization Infrastructure edges. The two historical permission-migration tests unwind/reapply E before their earlier schema checkpoints.
 
-**E is complete locally for review. F — Audit Trail UI & Browser Flow remains pending. No frontend, Phase 1.4 deferred UX fix or future checkpoint is included. Phase 1.5 is not complete.**
+**E is approved and committed as 904c04d, including its exact Playwright SHOW contract correction (4 passed). F is complete locally for review; no Phase 1.4 deferred UX fix or later milestone is included. Phase 1.5 is not marked complete pending review.**
+
+
+## Phase 1.5F — Audit Trail UI & Browser Flow
+
+The protected Vue route is `/app/organizations/:organizationId/audit`. Workspace navigation displays Audit Trail only when Organization SHOW returns exactly boolean meta.can_view_audit=true. Organization context and this capability stay view-local, fetched in one SHOW call, replacing workspace reliance on a mutable shared current-organization response. Existing onboarding/list state stays in Pinia. Audit events, cursor and filters are view-local, without storage, global active tenant, permission inference or Identity/actor lookup.
+
+The dedicated typed audit client uses only the approved GET endpoint with explicit encoded organization ID, fixed per_page=25, exact action and paired subject filters, and an opaque cursor passed unchanged. Page reads remain independently authorized by the server. The Audit view obtains fresh SHOW context at entry, Refresh and filter changes; absence of capability gives a denial message. Load more calls the authorized endpoint directly, so permission loss is enforced even after previously allowed navigation.
+
+The page shows newest-first facts, labels for all eleven actions, UTC timestamps (canonical precision preserved in time datetime/title), User #ID or System, subject type/ID, and expandable Before/After fields. Version 1 details use a finite field allowlist and scalar/string-list display; no raw arbitrary object/model/JSON dump or v-html. Unrecognized action receives a fallback label, and unknown payload versions keep the event header but do not interpret snapshots. No actor PII or invitation credentials are looked up/rendered. This does not add a guarantee against sensitive text deliberately entered into an approved business name.
+
+Apply/Clear filters and Refresh discard rows/cursor and start at the first page. Draft filters are separate from the applied request, so changing inputs cannot mix pagination scopes. A route/request generation guard clears old tenant context before loading and ignores late successes/failures, including continuation requests and unmount. There is no background refresh or permission subscription: current access is rechecked on server requests.
+
+Load more appends at most 25 rows and uses nullable next_cursor/has_more; there are no total/page-number semantics or unbounded request. Empty/loading/validation/error/end states are explicit. 401/403/404 clear previously loaded history and cursor; 404 also hides context. Session loss offers sign-in, while generic continuation failures retain the last successful page/cursor for retry. Refresh can recheck grant/reactivation changes. Reload resets filters and loaded pages to the initial view; Refresh retains the applied filters.
+
+Labels are explicitly associated with filter controls, native details elements support keyboard disclosure, tables have column/row headings and captions, and status/alert regions describe feedback. Desktop/mobile layouts use existing design conventions, wrapping subject IDs and locally scrolling wide changes. Browser checks verify no document overflow at 390px; screenshots are visually reviewed. No dependency, backend/API, migration, permission, write-side or deferred Phase 1.4 UX change.
+
+Vitest covers capability navigation, protected routing, stale context/history/denials, cursor append/retry, filtering/reset/refresh, empty and error states, safe text/arbitrary-field exclusion, system actors and version fallback. Real browser commands create 30 audited facts for pagination rather than inserting raw audit fixtures. Browser flows prove owner reads/refresh/reload/filtering, two owned tenant isolation, guest/unverified/foreign denial, a member granted audit.view, next-request revocation, hidden navigation/403, suspended 404, restored access and retained history after reactivation, and removal 404. The existing Mailpit invitation/member flow remains real and gains these assertions.
+
+F is complete locally for review. No later phase, export/search expansion, actor profiles, retention/deletion control, total count, background permission poll, virtualization or new backend operation is introduced. Production deployment/rate policy and representative high-volume validation remain as previously deferred.

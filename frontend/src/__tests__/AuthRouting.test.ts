@@ -69,3 +69,25 @@ describe('authentication route guards', () => {
     expect(authApi.me).toHaveBeenCalledTimes(3)
   })
 })
+
+it('protects the Audit route with authentication and verified identity', async () => {
+  const path = '/app/organizations/alpha/audit'
+  vi.mocked(authApi.me).mockRejectedValue({
+    isAxiosError: true,
+    response: { status: 401 },
+  })
+  const guest = createAppRouter(createMemoryHistory())
+  await guest.push(path)
+  expect(guest.currentRoute.value.name).toBe('login')
+  expect(guest.currentRoute.value.query.redirect).toBe(path)
+  setActivePinia(createPinia())
+  vi.mocked(authApi.me).mockResolvedValue(unverified)
+  const pending = createAppRouter(createMemoryHistory())
+  await pending.push(path)
+  expect(pending.currentRoute.value.name).toBe('verify-email')
+  setActivePinia(createPinia())
+  vi.mocked(authApi.me).mockResolvedValue(verified)
+  const authenticated = createAppRouter(createMemoryHistory())
+  await authenticated.push(path)
+  expect(authenticated.currentRoute.value.name).toBe('organization-audit')
+})

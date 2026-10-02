@@ -9,7 +9,12 @@ import OrganizationsView from '../views/OrganizationsView.vue'
 import OrganizationWorkspaceView from '../views/OrganizationWorkspaceView.vue'
 
 vi.mock('../lib/organizations', () => ({
-  organizationApi: { list: vi.fn(), create: vi.fn(), get: vi.fn() },
+  organizationApi: {
+    list: vi.fn(),
+    create: vi.fn(),
+    get: vi.fn(),
+    context: vi.fn(),
+  },
 }))
 
 const acme = { id: '01abc23456789abc23456789ab', name: 'Acme' }
@@ -77,21 +82,20 @@ describe('organization onboarding and context', () => {
   })
 
   it('loads workspace context from the route and handles an inaccessible ID', async () => {
-    vi.mocked(organizationApi.get)
-      .mockResolvedValueOnce(acme)
+    vi.mocked(organizationApi.context)
+      .mockResolvedValueOnce({ data: acme, meta: { can_view_audit: true } })
       .mockRejectedValueOnce({
         isAxiosError: true,
         response: { status: 404 },
       })
-    const { wrapper, router, store } = await setup(
-      `/app/organizations/${acme.id}`,
-    )
+    const { wrapper, router } = await setup(`/app/organizations/${acme.id}`)
     await flushPromises()
-    expect(organizationApi.get).toHaveBeenCalledWith(acme.id)
+    expect(organizationApi.context).toHaveBeenCalledWith(acme.id)
     expect(wrapper.get('h1').text()).toBe('Acme')
+    expect(wrapper.get('a[href$="/audit"]').text()).toBe('Audit Trail')
     await router.push('/app/organizations/missing')
     await flushPromises()
-    expect(store.current).toBeNull()
+    expect(wrapper.find('a[href$="/audit"]').exists()).toBe(false)
     expect(wrapper.get('h1').text()).toBe('Organization unavailable')
     wrapper.unmount()
   })
@@ -125,4 +129,40 @@ describe('organization onboarding and context', () => {
     expect(second.wrapper.text()).toContain('Name is invalid.')
     second.wrapper.unmount()
   })
+})
+
+it('hides Audit navigation from an ordinary active member', async () => {
+  vi.mocked(organizationApi.context).mockResolvedValue({
+    data: acme,
+    meta: { can_view_audit: false },
+  })
+  const { wrapper } = await setup(`/app/organizations/${acme.id}`)
+  await flushPromises()
+  expect(wrapper.get('h1').text()).toBe('Acme')
+  expect(wrapper.find('a[href$="/audit"]').exists()).toBe(false)
+  wrapper.unmount()
+})
+
+it('ignores stale workspace context and capability after switching tenants', async () => {
+  let finish!: (
+    value: Awaited<ReturnType<typeof organizationApi.context>>,
+  ) => void
+  vi.mocked(organizationApi.context)
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    )
+    .mockResolvedValueOnce({
+      data: { id: 'beta', name: 'Beta' },
+      meta: { can_view_audit: false },
+    })
+  const { wrapper, router } = await setup(`/app/organizations/${acme.id}`)
+  await router.push('/app/organizations/beta')
+  await flushPromises()
+  finish({ data: acme, meta: { can_view_audit: true } })
+  await flushPromises()
+  expect(wrapper.get('h1').text()).toBe('Beta')
+  expect(wrapper.find('a[href$="/audit"]').exists()).toBe(false)
+  wrapper.unmount()
 })

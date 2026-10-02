@@ -1,49 +1,63 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { isAxiosError } from 'axios'
-import { useOrganizationStore } from '../stores/organizations'
+import { organizationApi, type Organization } from '../lib/organizations'
 import { formFeedback } from '../lib/httpError'
 
 const route = useRoute()
-const organizations = useOrganizationStore()
+const organization = ref<Organization | null>(null)
+const loading = ref(true)
+const canViewAudit = ref(false)
 const errorMessage = ref('')
 const inaccessible = ref(false)
+let generation = 0
 
 async function load(id: string) {
+  const current = ++generation
+  organization.value = null
+  canViewAudit.value = false
+  loading.value = true
   errorMessage.value = ''
   inaccessible.value = false
   try {
-    await organizations.select(id)
+    const context = await organizationApi.context(id)
+    if (current !== generation) return
+    organization.value = context.data
+    canViewAudit.value = context.meta.can_view_audit === true
   } catch (error) {
+    if (current !== generation) return
     if (isAxiosError(error) && error.response?.status === 404)
       inaccessible.value = true
     else errorMessage.value = formFeedback(error).message
+  } finally {
+    if (current === generation) loading.value = false
   }
 }
 
-onMounted(() => load(String(route.params.organizationId)))
 watch(
   () => route.params.organizationId,
   (id) => load(String(id)),
+  { immediate: true },
 )
+onBeforeUnmount(() => generation++)
 </script>
 
 <template>
   <section aria-labelledby="workspace-title" class="mx-auto max-w-2xl">
-    <p v-if="organizations.loading" role="status">Loading organization…</p>
-    <template v-else-if="organizations.current">
+    <p v-if="loading" role="status">Loading organization…</p>
+    <template v-else-if="organization">
       <RouterLink :to="{ name: 'organizations' }" class="text-teal-300"
         >← Organizations</RouterLink
       >
       <h1 id="workspace-title" class="mt-6 text-3xl font-semibold">
-        {{ organizations.current.name }}
+        {{ organization.name }}
       </h1>
       <p class="mt-4 text-slate-300">Organization workspace</p>
       <RouterLink
         :to="{
           name: 'organization-roles',
-          params: { organizationId: organizations.current.id },
+          params: { organizationId: organization.id },
         }"
         class="mt-6 inline-block text-teal-300"
         >Roles &amp; Permissions</RouterLink
@@ -51,10 +65,19 @@ watch(
       <RouterLink
         :to="{
           name: 'organization-users',
-          params: { organizationId: organizations.current.id },
+          params: { organizationId: organization.id },
         }"
         class="ml-6 text-teal-300"
         >Users</RouterLink
+      >
+      <RouterLink
+        v-if="canViewAudit"
+        :to="{
+          name: 'organization-audit',
+          params: { organizationId: organization.id },
+        }"
+        class="ml-6 text-teal-300"
+        >Audit Trail</RouterLink
       >
       <p class="mt-2 text-slate-400">
         This workspace confirms your organization context. ERP modules arrive in

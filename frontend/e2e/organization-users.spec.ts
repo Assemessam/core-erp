@@ -65,6 +65,7 @@ test('invited user registers verifies accepts and follows membership lifecycle',
   await page.getByRole('link', { name: 'Roles & Permissions' }).click()
   await page.getByLabel('Role name').fill('Member Reader')
   await page.getByLabel('View organization members').check()
+  await page.getByLabel('View organization audit history').check()
   await page.getByRole('button', { name: 'Save role' }).click()
   await expect(
     page.getByRole('heading', { name: 'Member Reader' }),
@@ -104,6 +105,60 @@ test('invited user registers verifies accepts and follows membership lifecycle',
     await expect(
       memberPage.getByRole('heading', { name: 'Lifecycle Workspace' }),
     ).toBeVisible()
+    await memberPage
+      .getByRole('link', { name: 'Audit Trail', exact: true })
+      .click()
+    await expect(
+      memberPage.getByRole('list', { name: 'Audit events' }),
+    ).toContainText('Invitation accepted')
+    await expect(
+      memberPage.getByRole('list', { name: 'Audit events' }),
+    ).not.toContainText(memberEmail)
+    // Revoke through existing role administration, then observe fresh capability and direct API denial.
+    await page.goto(`${workspace}/roles`)
+    await page
+      .getByRole('button', { name: 'Edit Member Reader', exact: true })
+      .click()
+    await page.getByLabel('View organization audit history').uncheck()
+    await page.getByRole('button', { name: 'Save role' }).click()
+    await expect(page.getByText('Role saved.', { exact: true })).toBeVisible()
+    await memberPage
+      .getByRole('button', { name: 'Refresh', exact: true })
+      .click()
+    await expect(memberPage.getByRole('alert')).toHaveText(
+      'You do not have permission to view this audit trail.',
+    )
+    await expect(
+      memberPage.getByRole('list', { name: 'Audit events' }),
+    ).toHaveCount(0)
+    const organizationId = new URL(workspace).pathname.split('/').at(-1)!
+    expect(
+      await memberPage.evaluate(
+        async (id) =>
+          (
+            await fetch(`/api/v1/organizations/${id}/audit-events`, {
+              credentials: 'include',
+              headers: { Accept: 'application/json' },
+            })
+          ).status,
+        organizationId,
+      ),
+    ).toBe(403)
+    await memberPage.goto(workspace)
+    await expect(
+      memberPage.getByRole('heading', { name: 'Lifecycle Workspace' }),
+    ).toBeVisible()
+    await expect(
+      memberPage.getByRole('link', { name: 'Audit Trail', exact: true }),
+    ).toHaveCount(0)
+    await page
+      .getByRole('button', { name: 'Edit Member Reader', exact: true })
+      .click()
+    await page.getByLabel('View organization audit history').check()
+    await page.getByRole('button', { name: 'Save role' }).click()
+    await expect(page.getByText('Role saved.', { exact: true })).toBeVisible()
+    await page.goto(`${workspace}/users`)
+    await memberPage.reload()
     await memberPage.getByRole('link', { name: 'Users', exact: true }).click()
     await expect(
       memberPage
@@ -122,6 +177,13 @@ test('invited user registers verifies accepts and follows membership lifecycle',
     await expect(
       page.getByText('Member suspended.', { exact: true }),
     ).toBeVisible()
+    await memberPage.goto(`${workspace}/audit`)
+    await expect(memberPage.getByRole('alert')).toHaveText(
+      'This organization could not be found or accessed.',
+    )
+    await expect(
+      memberPage.getByRole('list', { name: 'Audit events' }),
+    ).toHaveCount(0)
     await memberPage.goto(workspace)
     await expect(
       memberPage.getByRole('heading', { name: 'Organization unavailable' }),
@@ -130,6 +192,10 @@ test('invited user registers verifies accepts and follows membership lifecycle',
     await expect(
       page.getByText('Member reactivated.', { exact: true }),
     ).toBeVisible()
+    await memberPage.goto(`${workspace}/audit`)
+    await expect(
+      memberPage.getByRole('list', { name: 'Audit events' }),
+    ).toContainText('Member reactivated')
     await memberPage.goto(`${workspace}/users`)
     await expect(
       memberPage
@@ -141,6 +207,13 @@ test('invited user registers verifies accepts and follows membership lifecycle',
     await expect(
       page.getByText('Member removed.', { exact: true }),
     ).toBeVisible()
+    await memberPage.goto(`${workspace}/audit`)
+    await expect(memberPage.getByRole('alert')).toHaveText(
+      'This organization could not be found or accessed.',
+    )
+    await expect(
+      memberPage.getByRole('list', { name: 'Audit events' }),
+    ).toHaveCount(0)
     await memberPage.goto(workspace)
     await expect(
       memberPage.getByRole('heading', { name: 'Organization unavailable' }),
