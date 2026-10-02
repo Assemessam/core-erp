@@ -69,7 +69,10 @@ test('organization onboarding survives refresh and denies another user', async (
   }, organizationId)
   expect(ownerResponse).toEqual({
     status: 200,
-    body: { data: { id: organizationId, name: 'Alice Works' } },
+    body: {
+      data: { id: organizationId, name: 'Alice Works' },
+      meta: { can_view_audit: true },
+    },
   })
 
   const secondContext = await browser.newContext()

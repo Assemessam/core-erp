@@ -19,8 +19,8 @@ final class AuditPayloadValidator
 
     public const int MAX_COLLECTION_ITEMS = 1000;
 
-    // Frozen initial audit vocabulary, not an import of Organization Domain internals.
-    private const array PERMISSIONS = ['members.invite', 'members.view', 'organizations.update', 'roles.view'];
+    // Explicitly versioned vocabulary; E adds audit.view without importing Organization.
+    private const array PERMISSIONS = ['audit.view', 'members.invite', 'members.view', 'organizations.update', 'roles.view'];
 
     public function validate(#[\SensitiveParameter] AuditEntry $entry): void
     {

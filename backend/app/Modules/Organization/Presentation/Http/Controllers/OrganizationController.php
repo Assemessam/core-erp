@@ -4,6 +4,8 @@ namespace App\Modules\Organization\Presentation\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
+use App\Modules\Organization\Application\Authorization\AccessDecision;
+use App\Modules\Organization\Application\Authorization\OrganizationAccess;
 use App\Modules\Organization\Application\Commands\CreateOrganization;
 use App\Modules\Organization\Application\Commands\RenameOrganization;
 use App\Modules\Organization\Application\Queries\ListOrganizations;
@@ -34,11 +36,16 @@ class OrganizationController extends Controller
         return new OrganizationResource($organization);
     }
 
-    public function show(Organization $organization): OrganizationResource
+    public function show(Request $request, Organization $organization, OrganizationAccess $access): OrganizationResource
     {
         Gate::authorize('view', $organization);
 
-        return new OrganizationResource($organization);
+        $actor = $request->user();
+        assert($actor instanceof User);
+
+        return (new OrganizationResource($organization))->additional(['meta' => [
+            'can_view_audit' => $access->viewAuditHistory($actor->id, $organization->id)->outcome === AccessDecision::ALLOWED,
+        ]]);
     }
 
     public function update(UpdateOrganizationRequest $request, Organization $organization, RenameOrganization $rename): OrganizationResource

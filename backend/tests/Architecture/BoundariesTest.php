@@ -1,11 +1,14 @@
 <?php
 
+use App\Modules\Audit\Application\Contracts\AuditHistoryAccess;
 use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
 use App\Modules\Organization\Application\Commands\RenameOrganization;
 use App\Modules\Organization\Application\Queries\ListOrganizations;
+use App\Modules\Organization\Infrastructure\Audit\OrganizationAuditHistoryAccess;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPolicy;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\OrganizationMembership;
+use App\Modules\Organization\Infrastructure\Providers\OrganizationServiceProvider;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationInvitationController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationMemberController;
@@ -50,6 +53,9 @@ arch('Audit Application is framework independent')
     ->not->toUse(['Illuminate', 'Laravel', 'Symfony', 'App\\Modules\\Audit\\Infrastructure', 'App\\Modules\\Audit\\Presentation',
         'app', 'auth', 'request', 'response', 'session', 'resolve', 'config', 'event', 'dispatch']);
 
+arch('Audit Infrastructure does not depend on HTTP Presentation')
+    ->expect('App\\Modules\\Audit\\Infrastructure')->not->toUse('App\\Modules\\Audit\\Presentation');
+
 arch('Organization Domain does not depend on Audit')
     ->expect('App\\Modules\\Organization\\Domain')->not->toUse('App\\Modules\\Audit');
 
@@ -63,7 +69,21 @@ arch('Organization consumes only the public Audit producer namespaces')
 
 arch('Organization delivery and infrastructure do not orchestrate audit facts')
     ->expect(['App\\Modules\\Organization\\Presentation', 'App\\Modules\\Organization\\Infrastructure'])
-    ->not->toUse('App\\Modules\\Audit');
+    ->not->toUse('App\\Modules\\Audit')
+    ->ignoring([OrganizationAuditHistoryAccess::class, OrganizationServiceProvider::class]);
+
+arch('only the Organization authorization adapter and provider consume the Audit access port')
+    ->expect([OrganizationAuditHistoryAccess::class, OrganizationServiceProvider::class])
+    ->not->toUse('App\\Modules\\Audit')->ignoring(AuditHistoryAccess::class);
+
+arch('Organization does not consume the internal Audit reader or query types')
+    ->expect('App\\Modules\\Organization')
+    ->not->toUse(['App\\Modules\\Audit\\Application\\Contracts\\AuditEventReader', 'App\\Modules\\Audit\\Application\\Queries']);
+
+arch('Audit Presentation delegates persistence and business authorization')
+    ->expect('App\\Modules\\Audit\\Presentation')
+    ->not->toUse(['App\\Modules\\Audit\\Infrastructure', DB::class, DatabaseManager::class, ConnectionInterface::class,
+        'Illuminate\\Database', Gate::class, Auth::class]);
 
 $appDirectory = dirname(__DIR__, 2).'/app';
 $moduleDirectories = glob($appDirectory.'/Modules/*', GLOB_ONLYDIR) ?: [];
@@ -82,10 +102,22 @@ it('has no obsolete global business directories', function () use ($appDirectory
     }
 });
 
-it('keeps checkpoint C audit layers limited to contracts and persistence', function () use ($appDirectory) {
-    foreach (['Domain', 'Presentation', 'Infrastructure/Eloquent', 'Application/Queries'] as $directory) {
+it('keeps checkpoint E Audit without a domain layer or Eloquent mutation model', function () use ($appDirectory) {
+    foreach (['Domain', 'Infrastructure/Eloquent'] as $directory) {
         expect(is_dir($appDirectory.'/Modules/Audit/'.$directory))->toBeFalse();
     }
+    expect(is_dir($appDirectory.'/Modules/Audit/Presentation/Http'))->toBeTrue();
+    expect(is_dir($appDirectory.'/Modules/Audit/Application/Queries'))->toBeTrue();
+});
+
+it('keeps the Audit history reader read only and scoped in Infrastructure', function () use ($appDirectory) {
+    $parser = (new ParserFactory)->createForHostVersion();
+    $finder = new NodeFinder;
+    $nodes = $parser->parse(file_get_contents($appDirectory.'/Modules/Audit/Infrastructure/Persistence/DatabaseAuditEventReader.php')) ?? [];
+    $writes = $finder->find($nodes, fn (Node $node): bool => ($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall)
+        && $node->name instanceof Node\Identifier
+        && in_array(strtolower($node->name->toString()), ['insert', 'update', 'delete', 'truncate', 'transaction', 'begintransaction', 'commit', 'rollback', 'offset', 'join'], true));
+    expect($writes)->toBeEmpty();
 });
 
 it('keeps audit transaction ownership in the caller', function () use ($appDirectory) {

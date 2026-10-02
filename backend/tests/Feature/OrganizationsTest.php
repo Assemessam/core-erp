@@ -91,7 +91,7 @@ it('lists only memberships and hides unrelated organizations', function () {
     ]]);
     $this->getJson('/api/v1/organizations/'.$a->id)->assertOk()->assertExactJson(['data' => [
         'id' => $a->id, 'name' => 'Alpha',
-    ]]);
+    ], 'meta' => ['can_view_audit' => true]]);
     $this->getJson('/api/v1/organizations/'.$c->id)->assertNotFound();
     $this->getJson('/api/v1/organizations/01AAAAAAAAAAAAAAAAAAAAAAAA')->assertNotFound();
     $this->patchJson('/api/v1/organizations/'.$c->id, ['name' => ''])->assertNotFound();

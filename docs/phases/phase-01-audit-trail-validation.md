@@ -1,6 +1,6 @@
 # Phase 1.5 — Audit Trail validation
 
-Current checkpoint: **1.5D Invitation & Membership Lifecycle integration complete locally, awaiting review**. B/C are approved and committed as `2675976` / `c040582`. B/C results below are historical; the appended D record supersedes their integration status. Phase 1.5 is not complete and E has not begun.
+Current checkpoint: **1.5E Authorized Audit Query API complete locally, awaiting review**. B/C/D are approved and committed as `2675976` / `c040582` / `91b0725`. Their results below are historical; the appended E record supersedes their API status. Phase 1.5 is not complete and F has not begun.
 
 ## Phase 1.5B — Audit Persistence & Safety Contracts (historical)
 
@@ -332,3 +332,98 @@ Review replacement's paired event ordering/final ID, persisted expiration precis
 Known limitations: a forcibly killed disposable run may require manually verified cleanup; test database create/drop privileges are required. PostgreSQL administrators can bypass storage protections and privileged SQL can fabricate/omit facts; no cryptographic completeness guarantee. Production privilege separation, retention/privacy, load and hosted deployment remain unverified. No authorized history query, audit.view or UI exists; no production deployment, queue/outbox, expiration or global authentication audit was added.
 
 Recommend separately authorized **1.5E — Authorized Audit Query API**: introduce the approved narrow Audit-owned authorization port implemented by Organization, audit.view, tenant-scoped bounded cursor reads and minimal filters/Resources, with direct/API authorization and cross-tenant denial tests. **Stop here; E has not begun.**
+
+## Phase 1.5E — Authorized Audit Query API
+
+Date: 2026-10-01; final resumed verification: 2026-10-02. Status: complete locally, awaiting review. Branch: feature/audit-trail. Clean committed D baseline verified as 91b0725 (C c040582; B 2675976). The first preflight stopped because D was dirty; after the user's continuation the checkpoint commit and clean tree were present. Nothing staged/committed/pushed; no branch change/reset/discard. Only E is implemented. F/frontend and Phase 1.4 deferred UX remain untouched; Phase 1.5 is not complete.
+
+### Inspection and baseline
+
+Read AGENTS.md, ADRs 0005/0006/0007 and the full validation record. Inspected the complete Audit module and indexes, OrganizationAccess/AccessDecision/AccessDenied, Policy/provider/PermissionKey, all permission migrations, Organization HTTP/Resource/Form Request conventions, routes, exception composition and architecture checks. Baseline composer quality: **367 passed / 2,318 assertions**, Pint 144 files and Larastan level 8 clean. All backend database suites ran sequentially and never overlapped browser writes.
+
+### Permission and authorization boundary
+
+PermissionKey adds only AuditView=audit.view and its catalog label. New migration 2026_10_01_000003_add_audit_view_permission expands the frozen PostgreSQL permissions_known_key constraint and inserts the new row. Its down removes audit.view role grants, removes the permission and restores the prior four-key check. A real PostgreSQL rollback/reapply test preserves all four prior permissions/grants, proves audit.view rejected after down and attachable after up, and rejects audit.write. Migration reapplied; historical migrations untouched. Two historical migration tests now unwind/reapply E around their older checkpoint schema.
+
+OrganizationAccess.viewAuditHistory reuses persisted active-member/owner/permission semantics. Owner is allowed without a role, active audit.view member allowed, ordinary active member forbidden, suspended/nonmember/missing tenant hidden. No cache/preloaded relationships or role-name authority. Explicit membership/tenant scoping applies even to owners and changed persisted ownership; direct invocation tests include transient owner-membership loss.
+
+Audit owns AuditHistoryAccess::assertCanView(actorUserId, organizationId). Organization Infrastructure's named OrganizationAuditHistoryAccess implements it by delegating to OrganizationAccess and preserving AccessDenied. OrganizationServiceProvider binds this contract explicitly. HTTP composition maps the existing exception to hidden 404 / forbidden 403. Audit never imports Organization/Identity or their exceptions/models. Existing write imports remain unchanged; only the adapter/provider may consume this access contract from Organization Infrastructure. Audit's own provider binds its internal AuditEventReader to DatabaseAuditEventReader. No module auto-discovery or Audit Policy.
+
+The version-1 AuditPayloadValidator permission vocabulary explicitly adds audit.view, keeping strict shape/secret/transition checks. Existing role administration can therefore audit creation/grant/revocation of this permission. No C/D write command, projection factory, transaction, lifecycle or delivery behavior changed.
+
+### Query, cursor, filters and presentation
+
+ListAuditEvents accepts explicit trusted actor/organization IDs and raw query input, authorizes first, validates through a pure AuditQueryValidator, then invokes the internal narrow reader with AuditEventCriteria. The Query Builder reader selects ten required columns, returns readonly AuditEventView/AuditEventPage projections and performs no writes, transactions, joins or Identity lookups. No Eloquent AuditEvent or generic repository.
+
+The only route is GET|HEAD /api/v1/organizations/{organization}/audit-events under existing auth:sanctum and verified middleware, with organization ULID string constraint rather than a foreign model type. Guest 401, unverified 403, owner/reader 200, ordinary active member 403, suspended/nonmember/foreign/missing/malformed tenant 404. Audit Form Request authorizes before its shared-validator callback; Application independently authorizes and validates again for direct callers. Hidden/forbidden tenant with malformed cursor/action/subject stays hidden/forbidden. Authorized invalid query returns safe fixed 422 field errors; no audit SELECT is executed.
+
+Supported input: per_page default 25, integer 1–100; opaque cursor; exact approved action; paired subject_type/subject_id. Subject types organization/role/invitation require structural ULID string; membership requires canonical positive bigint string within PHP/PostgreSQL maximum. Unsupported keys and deferred actor/text/date/JSON/sort filters are rejected. HTTP retains standard Laravel string normalization.
+
+Cursor is unpadded base64url JSON with exactly v=integer 1, created_at=canonical UTC six-fraction timestamp, id=structural ULID. Decode is limited to 256 encoded bytes, strict base64/canonical URL encoding, bounded JSON depth, exact keys/types/version and real calendar date. PostgreSQL-invalid year zero is rejected. Descending direction is fixed, not encoded. Cursor is unsigned navigation state, never authorization; no HMAC or tenant trust embedded.
+
+SQL always starts with organization_id = authorized tenant. The grouped cursor predicate is created_at < timestamp OR (created_at = timestamp AND id < id). Exact action/subject predicates remain tenant-scoped. Order is created_at DESC,id DESC; fetch is per_page+1. Only per_page events return; lookahead supplies has_more and the last returned event supplies next_cursor. No count, OFFSET, page number, user join, JSON search, arbitrary sort or global post-filter exists. Existing chronology/action/subject indexes are reused unchanged.
+
+Resource fields are exactly id, action, actor {type,id}, subject {type,id string}, changes {before,after}, payload_version, created_at UTC. System id=null. Empty stored JSON snapshot objects remain objects, even for a future payload version. Snapshots/version are returned without historical rewriting or interpretation. No organization_id, actor PII, email, token/hash, password, relations or database metadata. Response metadata is next_cursor nullable, has_more boolean and per_page integer; no totals/links/page semantics.
+
+Organization SHOW alone adds meta.can_view_audit after existing view authorization, from OrganizationAccess. Existing organization data and list contracts remain unchanged. Capability does not authorize history; ordinary member's direct request is independently denied. Existing role administration grants audit.view; revocation denies the next HTTP and Application call despite loaded grants. Suspension preserves the role while hiding history/show; activation restores audit access. Owners need no Owner role; a role called Owner has no owner authority.
+
+No suitable general authenticated read throttle exists (current limits cover invitation writes/acceptance). Per instruction, E documents/defer a production read rate policy rather than creating broader infrastructure. Query/cursor/page bounds are mandatory now.
+
+### Security, query and architecture proofs
+
+New focused tests cover the HTTP/direct access matrix and adapter binding; ownership/active-member checks; all denial-before-validation cases; per_page min/max/default and invalid types/values; bounded invalid cursor alphabet/JSON/version/types/date/precision/ID/fields/direction; paired/approved subject and action filters; unsupported parameters; empty results; fresh revocation/suspension/reactivation and capability/list contracts.
+
+Seven explicit INSERT fixtures include multiple identical timestamps across three pages; canonical newest-first/id tie-breaking has no duplication or omission and final cursor is null. No UPDATE of immutable events is used. One actor owning A/B replays an A cursor and A subject filter against B; only B rows may return. A role grant in A does not carry to ordinary membership in B. Actual invitation-created history asserts safe snapshots and boolean email/hash exclusion without credential dumps; system/future-version and empty-object reads preserve deliberate representation. Route inventory has only GET|HEAD; mutation requests return 405 and reads create no audit facts.
+
+SQL capture proves a single tenant-predicated audit SELECT, explicit fields, DESC order and per_page+1 limit, without SELECT *, OFFSET, count, joins or users. Static architecture tests retain framework-independent Audit Application, no Organization/Identity imports, no Presentation persistence/business Gate checks, Infrastructure independent of Presentation, no Audit Eloquent/Domain, and reader no mutation/transaction calls. Only named Organization adapter/provider exceptions are added; other Infrastructure and Domain dependencies remain forbidden. Static checks complement real tenant tests.
+
+### Files and documentation
+
+Created 14 production classes: AuditHistoryAccess, AuditEventReader, AuditCursor, AuditEventCriteria, AuditEventPage, AuditEventView, AuditQueryInvalid, ListAuditEvents, AuditQueryValidator, DatabaseAuditEventReader, ListAuditEventsRequest, AuditEventController, AuditEventResource, OrganizationAuditHistoryAccess. Created one permission migration and three tests: AuditQueryValidatorTest, AuditPermissionMigrationTest, AuditHistoryTest. Modified permission/access/provider/composition/route/show wiring, the explicit payload permission vocabulary, architecture tests, and three existing HTTP/migration test contracts. No package/config/environment/Compose/test-isolation/write-command changes.
+
+Updated ADR 0007, system overview, roadmap, README API contract and this record. B/C/D records remain historical; current status is E locally complete, F pending. The exact changed-file inventory is in final git status; unstaged git diff --stat excludes the 18 newly created untracked files by design. No staging was performed to manufacture a combined stat.
+
+### Final validation
+
+| Command | Result |
+| --- | --- |
+| docker compose exec -T backend php vendor/bin/pest tests/Unit/Audit/AuditQueryValidatorTest.php tests/Feature/Audit/AuditPermissionMigrationTest.php tests/Feature/Audit/AuditHistoryTest.php --compact | **97 passed / 457 assertions**; permission rollback/reapply included |
+| docker compose exec -T backend php vendor/bin/pest tests/Architecture --compact | **28 passed / 378 assertions** |
+| docker compose exec -T backend php vendor/bin/pest tests/Feature/Application/Auditing tests/Integration/InvitationAuditCommitTest.php tests/Feature/InvitationDeliveryTest.php tests/Unit/Audit/AuditPayloadValidatorTest.php --compact | **165 passed / 931 assertions**; C/D write/payload/F1 regressions |
+| docker compose exec -T backend composer quality | **469 passed / 2,814 assertions**, no skips; complete Unit/Application/Feature/Integration/Architecture; Pint **162 files**, Larastan **107 files**, level 8 no errors |
+| docker compose exec -T backend composer format | Passed; final quality verifies formatting |
+| docker compose exec -T backend composer dump-autoload --optimize --strict-psr | Passed, **9,109 classes** |
+| docker compose exec -T backend composer validate --strict; composer check-platform-reqs; composer audit | Valid, every platform requirement passed, no advisories |
+| docker compose exec -T frontend npm run quality; npm audit | All checks/build passed; **45 tests / 9 files**, zero vulnerabilities |
+| docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test | **3 passed / 1 failed**: existing organizations.spec.ts:70 exact SHOW assertion omits the approved meta.can_view_audit field; frontend test remains unchanged |
+| Supplemental external-copy browser check (command below) | **4 passed**; only the SHOW assertion in the temporary copy includes the new capability; all original flows including cross-user denial execute |
+| docker compose config --quiet; docker compose ps | Valid, five healthy services |
+| docker compose exec -T postgres pg_isready -U coreerp -d coreerp; docker compose exec -T redis redis-cli ping | Accepting / PONG |
+| curl -fsS http://localhost:8088/api/v1/ready; curl -fsS http://localhost:5174/api/v1/ready; curl -fsS http://localhost:8026/api/v1/info | API/proxy status ok, Mailpit reachable |
+| docker compose exec -T backend php artisan migrate --force; php artisan migrate:status | Only new E migration applied; all six Ran, E batch 6 |
+| docker compose exec -T backend php artisan route:list --path=audit-events | Exactly one GET|HEAD route |
+| git diff --check; git diff -- frontend; migration/import inspection | Clean; frontend empty; only new E permission migration; Audit has no foreign module imports |
+
+Initial focused failures were test setup (mass-assigned verification field and default non-SMTP mailer); corrected with existing forceFill/SMTP test conventions. Initial full-suite failures were the two deliberate API contract extensions (SHOW capability and permission catalog); exact assertions updated. Final results supersede these failures. No production behavior was weakened to satisfy tests.
+
+The checked-in browser suite is **not fully green**. Its one old exact-JSON assertion conflicts with E's approved SHOW metadata change. The frontend-unchanged constraint prevents updating that repository test in E. Supplemental verification does not replace this outstanding checked-in assertion; update its expected meta in the next authorized frontend/test checkpoint. No application/UI/browser source file in frontend was changed, even temporarily.
+
+A copy of frontend/e2e and playwright.config.ts was created with Python tempfile/shutil outside the repository. The sole assertion change was `body: {data: {id: organizationId, name: 'Alice Works'}, meta: {can_view_audit: true}}`. The successful supplemental command used one Playwright module resolution path (the CLI under /node_modules), read-only mounts and the existing four flows:
+
+```bash
+docker run --rm --network host --ipc=host \
+  -v "$PWD/frontend:/app:ro" \
+  -v "$PWD/frontend/node_modules:/node_modules:ro" \
+  -v "$task_browser_dir:/phase-e-contract-check:ro" \
+  -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble \
+  node /node_modules/@playwright/test/cli.js test \
+  --config /phase-e-contract-check/playwright.config.ts
+```
+
+Temporary harness attempts initially failed before test execution because a nested mount was read-only and two mounted Playwright paths caused duplicate module loading; the external root mount and single CLI path above resolved both. After the execution environment resumed with stopped services, `docker compose up -d --wait` restored all five healthy services. Complete backend quality, frontend quality, autoload, Composer/npm checks and readiness were reverified on 2026-10-02 with the same passing counts. Migration state remained six Ran / E batch 6. No test database was left behind.
+
+### Review, limits and stop point
+
+Review adapter binding/exception propagation, fresh authorization before query validation, mandatory SQL predicate and grouped cursor, precise resource/empty-object representation, permission migration down order, explicit audit.view payload vocabulary and show-only metadata. Cursor is not signed and pagination is a live view: concurrent newer inserts are seen on first-page refresh, not an export snapshot. Already-authorized requests can finish during concurrent revocation. Read throttle/representative production-volume plans and deployment privilege separation remain deferred. Privileged SQL still can fabricate facts; no new tamper-proof/completeness claim. Retention, actor deletion and immutable storage protections are unchanged.
+
+Recommend separately authorized **1.5F — Audit Trail UI & Browser Flow**, using show capability, this cursor contract, view-local results, stable actor IDs and payload-version handling with browser authorization/isolation tests. **Stop after E; F has not begun.**

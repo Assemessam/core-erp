@@ -26,6 +26,11 @@ final class OrganizationAccess
         return $this->permission($actorUserId, $organizationId, PermissionKey::RolesView);
     }
 
+    public function viewAuditHistory(int $actorUserId, string $organizationId): AccessDecision
+    {
+        return $this->permission($actorUserId, $organizationId, PermissionKey::AuditView);
+    }
+
     public function manageRoles(int $actorUserId, string $organizationId): AccessDecision
     {
         $organization = $this->memberOrganization($actorUserId, $organizationId);

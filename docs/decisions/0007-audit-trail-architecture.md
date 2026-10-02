@@ -1,19 +1,19 @@
 # ADR 0007: Tenant-scoped audit recording with transactional, append-only persistence
 
-- Status: Accepted design; Phase 1.5B/C approved and committed; Phase 1.5D Invitation/Membership integration complete locally, awaiting review
+- Status: Accepted design; Phase 1.5B/C/D approved and committed; Phase 1.5E Authorized Audit Query API complete locally, awaiting review
 - Date: 2026-10-01
 
 ## Context and checkpoint boundary
 
 CoreERP's Identity and Organization contexts follow ADR 0005. Organization owns memberships, tenant RBAC and invitations under ADR 0006. Sensitive Organization mutations need attributable history; future approved business modules will need the same recording capability. Technical Laravel logs do not provide that history.
 
-Checkpoint B established the recording contract, immutable input data, initial vocabulary, strict payload validation, PostgreSQL storage/protection, explicit provider wiring and tests. Checkpoint C instruments only CreateOrganization, RenameOrganization and SaveRole, emitting organization.created, organization.renamed, role.created and meaningful role.updated facts. Checkpoint D instruments the seven invitation/member lifecycle commands, completing the eleven approved mutation facts. There is no audit permission, history query, HTTP route, Resource, Policy or frontend. Phase 1.5 is not complete. Later checkpoints require separate authorization.
+Checkpoint B established the recording contract, immutable input data, initial vocabulary, strict payload validation, PostgreSQL storage/protection, explicit provider wiring and tests. Checkpoint C instruments only CreateOrganization, RenameOrganization and SaveRole, emitting organization.created, organization.renamed, role.created and meaningful role.updated facts. Checkpoint D instruments the seven invitation/member lifecycle commands, completing the eleven approved mutation facts. Checkpoint E adds audit.view, the authorized bounded read API and show-only capability metadata. There is no Audit Policy or frontend. Phase 1.5 is not complete; F requires separate authorization.
 
 ## Ownership and layers
 
-Audit is a separate supporting module. It owns safe recording, immutable storage and, later, history delivery. Organization continues to own the business facts and actor authorization. Putting Audit under Organization would give tenant administration inappropriate ownership of future Sales/Finance history; making it a platform logger would obscure its payload/disclosure semantics.
+Audit is a separate supporting module. It owns safe recording, immutable storage and authorized history delivery. Organization continues to own the business facts and actor authorization. Putting Audit under Organization would give tenant administration inappropriate ownership of future Sales/Finance history; making it a platform logger would obscure its payload/disclosure semantics.
 
-Audit currently has Application and Infrastructure only. It has no independent aggregate lifecycle or rich business invariant needing a Domain layer. Its schema validation and immutable inputs are Application recording concerns. Presentation will be introduced only with a real read API. No empty layers, generic repository or Eloquent audit model exist.
+Audit has Application, Infrastructure and the E HTTP Presentation layer. It has no independent aggregate lifecycle or rich business invariant needing a Domain layer. Its schema validation and immutable inputs are Application recording concerns. Presentation adapts the authorized history query through a Form Request, thin controller and explicit Resource. No empty layers, generic repository or Eloquent audit model exist.
 
 An audit event is a persisted fact about a successful business/security mutation. It is not automatically a Domain Event and does not dispatch consumers. Technical logs describe diagnostics; global authentication/security logs need separate scope, volume, privacy and retention decisions. No event sourcing, event bus, queue, outbox or authentication-event instrumentation is introduced.
 
@@ -42,11 +42,11 @@ Audit Infrastructure
     -> Laravel's current default PostgreSQL connection
 ```
 
-Audit imports no Organization or Identity classes. Table foreign keys are intentional database integrity relationships, not permission to import foreign Eloquent models. Validation and persistence implementations are private. Other modules may not consume Audit Infrastructure, Presentation, Validation or exception implementation details.
+Audit imports no Organization or Identity classes. Table foreign keys are intentional database integrity relationships, not permission to import foreign Eloquent models. Validation and persistence implementations are private. Other modules may not consume Audit Infrastructure, Presentation, Validation or exception implementation details. E adds the separate AuditHistoryAccess contract, implemented only by the Organization Infrastructure authorization adapter and wired by its provider; producer imports are unchanged.
 
 Producers build deliberate, named module-owned projections from scoped persisted records. The recorder validates shape and vocabulary, not actor authority or another module's subject existence/ownership. Those checks remain in the initiating use case. No producers were added in B.
 
-Organization uses one model-free Application factory, `Auditing/OrganizationAuditEntries`. C introduced four named methods; D adds invitationCreated, invitationRevoked (including optional replacement ID), invitationAccepted, membershipRolesChanged, membershipSuspended, membershipActivated and membershipRemoved. Its explicit scalar business values and permission/role-ID lists never contain models, requests, emails or invitation credentials. It normalizes lists to sorted unique stable strings and returns null for unchanged role/assignment sets. Only the factory imports AuditActor, AuditEntry, AuditSubject, AuditAction and AuditSubjectType; all ten write commands import AuditRecorder. Fifteen imports / six distinct public types remain confined to Contracts/Data/Vocabulary. No Organization Domain, Infrastructure or Presentation code imports Audit.
+Organization uses one model-free Application factory, `Auditing/OrganizationAuditEntries`. C introduced four named methods; D adds invitationCreated, invitationRevoked (including optional replacement ID), invitationAccepted, membershipRolesChanged, membershipSuspended, membershipActivated and membershipRemoved. Its explicit scalar business values and permission/role-ID lists never contain models, requests, emails or invitation credentials. It normalizes lists to sorted unique stable strings and returns null for unchanged role/assignment sets. Only the factory imports AuditActor, AuditEntry, AuditSubject, AuditAction and AuditSubjectType; all ten write commands import AuditRecorder. Fifteen imports / six distinct public types remain confined to Contracts/Data/Vocabulary. No Organization Domain or Presentation code imports Audit. E adds only the named Infrastructure authorization adapter/provider imports of AuditHistoryAccess; write producer imports stay unchanged.
 
 ## Transaction and failure semantics
 
@@ -115,7 +115,7 @@ Each snapshot is a JSON object or SQL null. At least one exists. Create uses nul
 
 Creation's owner and acceptance's resulting user must equal the user actor. Replacement cannot point to the revoked invitation itself. Subject/role IDs are structurally checked but their tenant ownership remains producer responsibility.
 
-Names are nonblank strings, bounded to the existing organization 255/role 80 character limits. IDs in facts are positive PHP integers. Permission lists use the four current approved permission keys (`members.invite`, `members.view`, `organizations.update`, `roles.view`), deliberately without importing Organization's Domain enum. A new permission, including future audit.view, needs a reviewed schema-vocabulary extension with tests. Lists are sequential, sorted by exact string value and duplicate-free; validation rejects instead of sorting/truncating input. Expiration is a real calendar timestamp in canonical UTC `YYYY-MM-DDTHH:MM:SS.ffffffZ` form.
+Names are nonblank strings, bounded to the existing organization 255/role 80 character limits. IDs in facts are positive PHP integers. Permission lists use five reviewed keys (`audit.view`, `members.invite`, `members.view`, `organizations.update`, `roles.view`), deliberately without importing Organization's Domain enum. E explicitly extends the version-1 permission vocabulary so audited role administration can grant/revoke audit.view; historical payloads are unchanged. Future permissions still require a reviewed schema-vocabulary extension with tests. Lists are sequential, sorted by exact string value and duplicate-free; validation rejects instead of sorting/truncating input. Expiration is a real calendar timestamp in canonical UTC `YYYY-MM-DDTHH:MM:SS.ffffffZ` form.
 
 Only payload version 1 is accepted now. Evolving payloads require an explicit version/schema change and tests; existing stored records must remain interpretable.
 
@@ -139,7 +139,7 @@ The validator also rejects recursive arrays through its depth guard. These contr
 
 ## PostgreSQL storage and append-only behavior
 
-New migration only: `2026_10_01_000002_create_audit_events_table.php`. Historical migrations and permission catalog remain unchanged.
+B storage migration: `2026_10_01_000002_create_audit_events_table.php`. Historical migrations remain unchanged. E separately adds `2026_10_01_000003_add_audit_view_permission.php`; storage schema is unchanged.
 
 | Column | Type / semantics |
 | --- | --- |
@@ -156,7 +156,7 @@ New migration only: `2026_10_01_000002_create_audit_events_table.php`. Historica
 
 No updated_at, deleted_at or arbitrary metadata. Both actor and organization foreign keys use ON DELETE RESTRICT / ON UPDATE RESTRICT. No subject FK: history intentionally survives subject deletion. Account/organization physical deletion now requires a later architectural decision once referenced by audit rows. ON DELETE SET NULL would update immutable history and is deliberately excluded.
 
-Indexes: primary key; actor_user_id for FK checks; (organization_id, created_at DESC, id DESC); the same chronology prefixed with action; the same chronology prefixed with subject_type/subject_id. These prepare the approved later bounded cursor/action/subject reads. No GIN, metadata or speculative actor-filter index exists.
+Indexes: primary key; actor_user_id for FK checks; (organization_id, created_at DESC, id DESC); the same chronology prefixed with action; the same chronology prefixed with subject_type/subject_id. E uses these for bounded cursor/action/subject reads. No GIN, metadata or speculative actor-filter index exists.
 
 One small PL/pgSQL function raises SQLSTATE 55000 with a fixed append-only message. Two unconditional BEFORE FOR EACH STATEMENT triggers reject UPDATE/DELETE and TRUNCATE, including zero-row attempts. There is no application/session/test bypass flag, soft-delete path or Eloquent mutation model. Rolling back an uncommitted insert is correct transactional behavior and requires no deletion bypass.
 
@@ -186,4 +186,33 @@ D Application tests assert every new fact, sorted persisted role sets, fresh-sta
 
 Architecture checks enforce framework-free Audit Application, no Audit -> Organization/Identity imports, no Organization Domain -> Audit, an explicit Organization-to-Audit public namespace allowlist, no Organization delivery/infrastructure audit orchestration, private implementation isolation, no controller writes/transactions and caller-owned recorder transaction control. Runtime tests supplement static rules.
 
-Approved later scope, not implemented: audit.view and authorized tenant history with a narrow Audit-owned authorization port implemented by Organization; newest-first created_at/id cursor pagination; minimal action/subject filters; safe Resource; view-local Vue Audit Trail and browser flow. C/D add no migrations, permissions, API or frontend changes. No future business modules are created now.
+E implements the approved audit.view, authorization port, tenant history query, created_at/id cursor, action/subject filters and safe Resource below. The view-local Vue Audit Trail and browser flow remain pending F. C/D added no migrations, permissions, API or frontend changes. No future business modules are created now.
+
+
+## Phase 1.5E — Authorized history read API
+
+Organization owns authorization for `audit.view`. A new versioned migration expands permissions_known_key and inserts only this permission; down removes its role grants before its permission row and restores the previous four-key constraint. Existing keys/grants survive. Historical migrations and audit storage protections are unchanged; rollback leaves recorded role history intact.
+
+OrganizationAccess.viewAuditHistory reads fresh persisted active membership, ownership and tenant role grants. Active owner needs no role; active member with audit.view is allowed; ordinary active member is forbidden (403); suspended/nonmember/missing tenant is hidden (404). HTTP middleware preserves guest 401 and unverified 403. There is no permission cache. Revocation, suspension and reactivation take effect at the next check. As with existing APIs, an already-authorized request can finish during a concurrent revocation.
+
+Audit Application owns `AuditHistoryAccess::assertCanView(actorUserId, organizationId)`. Organization Infrastructure's OrganizationAuditHistoryAccess delegates to OrganizationAccess and lets its safe AccessDenied propagate. Central HTTP composition already maps that exception to hidden 404 / forbidden 403. Audit neither imports nor catches Organization authorization types. OrganizationServiceProvider binds the port; AuditServiceProvider binds only Audit-owned recording/read persistence contracts. The source edge is Organization Infrastructure → Audit Application contract, never Audit → Organization or Identity.
+
+ListAuditEvents accepts explicit trusted actor ID, tenant ID and raw query input. It authorizes before bounded validation and invokes the internal AuditEventReader with typed AuditEventCriteria. DatabaseAuditEventReader uses Query Builder and returns readonly AuditEventView/AuditEventPage projections. There is no Eloquent AuditEvent, generic repository, Domain layer, Policy, transaction or read-generated audit fact.
+
+`GET /api/v1/organizations/{organization}/audit-events` uses auth:sanctum and verified middleware. Organization is a route-constrained ULID string, avoiding foreign model binding. ListAuditEventsRequest authorizes through the port before its validation callback, sharing the pure Application validator. The Application query independently repeats authorization/validation to protect direct callers and see fresh state after HTTP validation. This deliberately costs a second small authorization check. Authorized invalid inputs receive fixed 422 field errors with no supplied values or SQL details; hidden/forbidden callers receive denial first.
+
+Only `per_page` (default 25, integer 1–100), `cursor`, exact AuditAction `action`, and paired `subject_type` / `subject_id` are accepted. Unsupported query keys are rejected. Subjects use the approved four types, ULIDs or canonical positive bigint strings (membership; at most 9223372036854775807). Actor/email/free-text/date/JSON/sort filters remain deferred. Laravel's standard string normalization still applies at the HTTP boundary.
+
+The unsigned opaque cursor is unpadded base64url JSON with exactly `v` (integer 1), `created_at` (real UTC calendar timestamp with six fractional digits) and `id` (structural ULID). Parsing bounds the encoded size at 256 bytes, uses strict decoding/canonical base64url, bounded JSON depth, exact fields and scalar types. Year zero is rejected because PostgreSQL cannot represent it. Direction is fixed descending and is not encoded. The cursor is a navigation position, never an authorization credential: replay/tampering can change navigation but cannot remove the tenant SQL predicate. No HMAC is needed.
+
+Every read starts with `organization_id = authorized organization`, adds a grouped `(created_at < cursor_time OR (created_at = cursor_time AND id < cursor_id))` position, then optional exact filters. Ordering is created_at DESC, id DESC. Fetch is limited to per_page+1; only per_page projections return. The extra row determines has_more and the last returned row determines next_cursor. Existing tenant chronology/action/subject indexes serve these paths. There is no total count, OFFSET, arbitrary sorting, global fetch/filter, user join or N+1 actor lookup. Pagination is a live view, not an export snapshot; newly inserted rows ahead of a cursor appear when refreshing the first page.
+
+Response: `data` holds events with id, action, actor {type,id}, subject {type,id as string}, changes {before,after}, payload_version and canonical UTC created_at. System actor id is null. Metadata is exactly `{next_cursor: string|null, has_more: bool, per_page: int}`. Tenant ID, email/name joins, tokens/hashes, credentials, relations and internal metadata are absent. Read returns stored snapshots/version without rewriting or interpreting future versions; full payload safety remains the server-owned recording-schema responsibility. Arbitrary privileged SQL insertion is not an approved producer.
+
+Organization SHOW alone adds `meta.can_view_audit` from the same OrganizationAccess semantics after view authorization. Its data object and list response remain unchanged. Capability supports later navigation only; direct audit requests authorize independently.
+
+No suitable general authenticated read throttle exists; the current throttles cover invitation mutation/acceptance. E therefore defers a rate-limit policy rather than adding broader infrastructure. Mandatory query/page/cursor bounds remain active. Revisit rate limiting and representative data-volume query plans during production deployment.
+
+Tests cover the HTTP/direct authorization matrix, persisted-state/ownership checks, malformed-input non-disclosure, immediate permission revocation, retained-role suspension/reactivation, exact resources and actual invitation redaction, system/future-version representation, empty/filter results, cross-tenant cursor and subject replay, explicit SQL projection/bounds, and deterministic three-page timestamp ties with no gaps/duplicates. Fixtures INSERT explicit times and never UPDATE immutable events. Architecture checks retain framework-independent Audit Application and prohibit foreign imports, presentation persistence, read-side mutation and unauthorized Organization Infrastructure edges. The two historical permission-migration tests unwind/reapply E before their earlier schema checkpoints.
+
+**E is complete locally for review. F — Audit Trail UI & Browser Flow remains pending. No frontend, Phase 1.4 deferred UX fix or future checkpoint is included. Phase 1.5 is not complete.**

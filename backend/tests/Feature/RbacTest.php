@@ -50,6 +50,7 @@ it('lets the owner create and edit roles with stable minimal representations', f
         ['key' => 'roles.view', 'label' => 'View roles and permissions'],
         ['key' => 'members.view', 'label' => 'View organization members'],
         ['key' => 'members.invite', 'label' => 'Invite organization members'],
+        ['key' => 'audit.view', 'label' => 'View organization audit history'],
     ]]);
     $this->getJson($base.'/roles')->assertExactJson([
         'data' => [['id' => $role->id, 'name' => 'Readers', 'permissions' => []]],
@@ -221,8 +222,10 @@ it('cascades dependent links intentionally without deleting permissions or unrel
 });
 
 it('preserves pre-RBAC ownership across migration rollback and reapply without owner roles', function () {
+    $auditPermission = require database_path('migrations/2026_10_01_000003_add_audit_view_permission.php');
     $migration = require database_path('migrations/2026_09_30_000002_create_rbac_tables.php');
     $lifecycle = require database_path('migrations/2026_10_01_000001_add_membership_lifecycle_and_invitations.php');
+    $auditPermission->down();
     $lifecycle->down();
     $migration->down();
     $organization = rbacOrganization();
@@ -230,6 +233,7 @@ it('preserves pre-RBAC ownership across migration rollback and reapply without o
     $migration->up();
     DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
     $lifecycle->up();
+    $auditPermission->up();
     DB::statement('SET CONSTRAINTS ALL DEFERRED');
     expect($organization->fresh()->owner_user_id)->toBe($ownerId);
     expect($organization->roles()->count())->toBe(0);

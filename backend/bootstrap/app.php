@@ -1,5 +1,6 @@
 <?php
 
+use App\Modules\Audit\Application\Exceptions\AuditQueryInvalid;
 use App\Modules\Organization\Application\Authorization\AccessDenied;
 use App\Modules\Organization\Application\Exceptions\RoleNameConflict;
 use App\Modules\Organization\Domain\Invitations\InvitationRejected;
@@ -11,6 +12,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -25,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->dontFlash(['token', 'password', 'password_confirmation', 'current_password']);
         $exceptions->dontReport([InvitationRejected::class]);
+        $exceptions->map(AuditQueryInvalid::class, fn (AuditQueryInvalid $failure) => ValidationException::withMessages($failure->errors));
         $exceptions->render(OrganizationFailureMapper::invitationRejected(...));
         $exceptions->render(OrganizationFailureMapper::invitationDeliveryFailed(...));
         $exceptions->map(OwnerMembershipProtected::class, OrganizationFailureMapper::ownerMembershipProtected(...));

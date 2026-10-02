@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\HealthController;
+use App\Modules\Audit\Presentation\Http\Controllers\AuditEventController;
 use App\Modules\Identity\Presentation\Http\Controllers\CurrentUserController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationInvitationController;
@@ -13,6 +14,7 @@ Route::get('/health', [HealthController::class, 'live']);
 Route::get('/ready', [HealthController::class, 'ready']);
 Route::get('/me', CurrentUserController::class)->middleware('auth:sanctum');
 Route::middleware(['auth:sanctum', 'verified'])->group(function (): void {
+    Route::get('/organizations/{organization}/audit-events', AuditEventController::class)->whereUlid('organization');
     Route::post('/invitations/{invitation}/accept', [OrganizationInvitationController::class, 'accept'])->middleware('throttle:30,1');
     Route::scopeBindings()->group(function (): void {
         Route::get('/organizations/{organization}/users-access', OrganizationUsersAccessController::class);

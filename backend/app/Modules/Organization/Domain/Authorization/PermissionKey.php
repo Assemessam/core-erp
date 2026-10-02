@@ -8,6 +8,7 @@ enum PermissionKey: string
     case RolesView = 'roles.view';
     case MembersView = 'members.view';
     case MembersInvite = 'members.invite';
+    case AuditView = 'audit.view';
 
     public function label(): string
     {
@@ -16,6 +17,7 @@ enum PermissionKey: string
             self::RolesView => 'View roles and permissions',
             self::MembersView => 'View organization members',
             self::MembersInvite => 'Invite organization members',
+            self::AuditView => 'View organization audit history',
         };
     }
 }

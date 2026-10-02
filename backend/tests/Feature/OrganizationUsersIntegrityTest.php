@@ -49,13 +49,16 @@ it('enforces invitation references normalization state pending uniqueness and te
 });
 
 it('backfills existing membership as active on lifecycle migration reapply', function () {
+    $auditPermission = require database_path('migrations/2026_10_01_000003_add_audit_view_permission.php');
     $migration = require database_path('migrations/2026_10_01_000001_add_membership_lifecycle_and_invitations.php');
+    $auditPermission->down();
     $migration->down();
     $owner = User::factory()->create();
     $org = app(CreateOrganization::class)->handle($owner->id, 'Before lifecycle');
     $member = $org->memberships()->create(['user_id' => User::factory()->create()->id]);
     DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
     $migration->up();
+    $auditPermission->up();
     DB::statement('SET CONSTRAINTS ALL DEFERRED');
     expect(DB::table('organization_memberships')->where('organization_id', $org->id)->pluck('status')->all())->toBe(['active', 'active']);
     DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
