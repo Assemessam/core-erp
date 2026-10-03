@@ -6,7 +6,7 @@ use App\Modules\Organization\Domain\Invitations\InvitationState;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\DisposableConcurrencyDatabase;
 
-it('serializes two real PostgreSQL acceptance sessions and commits exactly one membership and audit fact', function () {
+it('serializes two real PostgreSQL acceptance sessions and commits exactly one membership audit fact and owner notification', function () {
     $applicationDatabase = (string) config('database.connections.pgsql.database');
     DisposableConcurrencyDatabase::run(function () use ($applicationDatabase): void {
         $owner = User::factory()->create();
@@ -69,6 +69,26 @@ it('serializes two real PostgreSQL acceptance sessions and commits exactly one m
             ]);
             expect($row->payload_version)->toBe(1);
             expect($row->created_at)->not->toBeNull();
+            $ownerMembership = $org->memberships()->where('user_id', $owner->id)->sole();
+            $notification = DB::table('organization_notifications')->where('organization_id', $org->id)->sole();
+            expect($notification->organization_id)->toBe($org->id);
+            expect($notification->recipient_user_id)->toBe($owner->id);
+            expect($notification->recipient_membership_id)->toBe($ownerMembership->id)->not->toBe($membership->id);
+            expect($notification->type)->toBe('organization.invitation_accepted');
+            expect($notification->payload_version)->toBe(1);
+            expect(json_decode($notification->payload, true, flags: JSON_THROW_ON_ERROR))->toEqual([
+                'invitation_id' => $invite->id, 'membership_id' => (string) $membership->id, 'accepted_user_id' => $user->id,
+            ]);
+            $payload = json_decode($notification->payload, true, flags: JSON_THROW_ON_ERROR);
+            expect($payload['invitation_id'])->toBe($invite->id);
+            expect($payload['membership_id'])->toBe((string) $membership->id);
+            expect($payload['accepted_user_id'])->toBe($user->id);
+            expect($notification->title)->toBe('Invitation accepted');
+            expect($notification->body)->toBe('User #'.$user->id.' accepted an invitation and joined the organization.');
+            expect($notification->target_type)->toBe('organization.users');
+            expect($notification->target_id)->toBeNull();
+            expect($notification->read_at)->toBeNull();
+            expect($notification->created_at)->not->toBeNull();
         } finally {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();

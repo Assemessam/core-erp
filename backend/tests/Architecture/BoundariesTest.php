@@ -6,7 +6,12 @@ use App\Modules\Notification\Application\Contracts\NotificationOrganizationAcces
 use App\Modules\Notification\Application\Contracts\NotificationPublisher;
 use App\Modules\Notification\Application\Data\NotificationDraft;
 use App\Modules\Notification\Application\Data\NotificationMembershipContext;
+use App\Modules\Notification\Application\Data\NotificationTarget;
+use App\Modules\Notification\Application\Vocabulary\NotificationTargetType;
+use App\Modules\Notification\Application\Vocabulary\NotificationType;
+use App\Modules\Organization\Application\Commands\AcceptInvitation;
 use App\Modules\Organization\Application\Commands\RenameOrganization;
+use App\Modules\Organization\Application\Notifications\OrganizationNotifications;
 use App\Modules\Organization\Application\Queries\ListOrganizations;
 use App\Modules\Organization\Infrastructure\Audit\OrganizationAuditHistoryAccess;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPolicy;
@@ -103,13 +108,26 @@ arch('Notification Application is framework independent')
 arch('Audit and Identity have no Notification dependency')
     ->expect(['App\\Modules\\Audit', 'App\\Modules\\Identity'])->not->toUse('App\\Modules\\Notification');
 
-arch('Organization Domain and Application publish no notifications through checkpoint C')
-    ->expect(['App\\Modules\\Organization\\Domain', 'App\\Modules\\Organization\\Application'])
+arch('Organization Domain has no Notification dependency')
+    ->expect('App\\Modules\\Organization\\Domain')
     ->not->toUse('App\\Modules\\Notification');
 
-arch('only the approved Organization adapter and provider consume Notification')
+arch('only acceptance its projection and the approved access bridge consume Notification')
     ->expect('App\\Modules\\Organization')->not->toUse('App\\Modules\\Notification')
-    ->ignoring([OrganizationNotificationAccess::class, OrganizationServiceProvider::class]);
+    ->ignoring([AcceptInvitation::class, OrganizationNotifications::class, OrganizationNotificationAccess::class, OrganizationServiceProvider::class]);
+
+arch('AcceptInvitation consumes only the public Notification publisher')
+    ->expect(AcceptInvitation::class)->not->toUse('App\\Modules\\Notification')
+    ->ignoring(NotificationPublisher::class);
+
+arch('OrganizationNotifications consumes only the approved Notification draft and vocabulary')
+    ->expect(OrganizationNotifications::class)->not->toUse('App\\Modules\\Notification')
+    ->ignoring([NotificationDraft::class, NotificationTarget::class, NotificationType::class, NotificationTargetType::class]);
+
+arch('OrganizationNotifications stays model free and framework independent')
+    ->expect(OrganizationNotifications::class)
+    ->not->toUse(['Illuminate', 'Laravel', 'Symfony', 'App\\Modules\\Organization\\Infrastructure',
+        'App\\Modules\\Organization\\Presentation', 'app', 'auth', 'request', 'resolve', 'config', 'event', 'dispatch']);
 
 arch('Organization composition consumes only the Notification access contract and context')
     ->expect([OrganizationNotificationAccess::class, OrganizationServiceProvider::class])
@@ -150,7 +168,7 @@ it('keeps checkpoint E Audit without a domain layer or Eloquent mutation model',
     expect(is_dir($appDirectory.'/Modules/Audit/Application/Queries'))->toBeTrue();
 });
 
-it('keeps checkpoint C Notification without Domain Eloquent or delivery infrastructure', function () use ($appDirectory) {
+it('keeps checkpoint D Notification without Domain Eloquent or delivery infrastructure', function () use ($appDirectory) {
     foreach (['Domain', 'Infrastructure/Eloquent', 'Infrastructure/Mail', 'Infrastructure/Jobs'] as $directory) {
         expect(is_dir($appDirectory.'/Modules/Notification/'.$directory))->toBeFalse();
     }

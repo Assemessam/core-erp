@@ -70,6 +70,8 @@ it('rolls back membership role grants and state after a late acceptance failure'
     expect($org->memberships()->where('user_id', $user->id)->exists())->toBeFalse();
     expect(DB::table('organization_membership_role')->where('role_id', $role->id)->exists())->toBeFalse();
     expect($invitation->fresh()->state)->toBe(InvitationState::Pending);
+    expect(DB::table('audit_events')->where('organization_id', $org->id)->where('action', 'invitation.accepted')->exists())->toBeFalse();
+    expect(DB::table('organization_notifications')->where('organization_id', $org->id)->exists())->toBeFalse();
 });
 
 it('rolls back role replacement on assignment failure', function () {

@@ -1,6 +1,6 @@
 # Phase 1.6 — Notification Center validation
 
-Current status: B approved/committed as 1627633; **C complete locally, awaiting review**. Phase 1.6 remains incomplete; producer D and frontend E are pending. The B section below preserves its original checkpoint evidence; C evidence follows it.
+Current status: B approved/committed as 1627633; C approved/committed as 45ceea9; **D complete locally, awaiting review**. Phase 1.6 remains incomplete; frontend E is pending explicit authorization. B/C sections preserve their original checkpoint evidence; D evidence follows them.
 
 ## Checkpoint B: Persistence & Safety Contracts
 
@@ -203,3 +203,101 @@ Source dependency inventory is unchanged across modules: Notification → Organi
 Review mandatory triple predicates including replay EXISTS and grouped cursor OR, membership resolution before validation, item response uniformity, first-read conditional update and creation-time clamp, deliberate projections/future-version tolerance, SQL failure sanitization, read-all statement visibility and narrow dependencies. Queries are live pagination rather than a snapshot. Already-authorized operations can finish during concurrent membership revocation, consistent with existing access semantics; no new linearization/locking policy is claimed. Real replay/conditional SQL is tested; no new multi-process consumer test was required. Production throttling, representative-volume plans, least privilege, retention and deployment hardening remain deferred. All requested local checks were verified; hosted CI was not run.
 
 C adds no producer, frontend center/badge/polling/navigation, generic mail, queues/Horizon, retries/outbox, realtime/Reverb, preferences, deletion or archive. Phase 1.6 remains incomplete. Recommendation after C review and explicit authorization: **1.6D — Invitation Acceptance Notification Producer**, using the unchanged B publisher in AcceptInvitation's existing transaction with trusted current owner recipient context and rollback/credential-exclusion tests. D has not begun; stop at C.
+
+
+## Checkpoint D: Invitation Acceptance Notification Producer
+
+Date: 2026-10-03. Status: **complete locally, awaiting review**. Branch was exactly feature/notifications, the tracked/untracked tree was clean and the approved C checkpoint was HEAD 45ceea9 before editing. Inspected AGENTS.md, ADRs 0005–0008, Phase 1.4/1.5/1.6 validation, acceptance/Audit projections, B publisher/draft/validator/renderer/access bridge, ownership constraints, invitation mail/F1/security, C consumer tests, architecture and guarded disposable concurrency support. The existing five services were already healthy. Baseline passed **353 tests / 1997 assertions**. No staging, commit, push, switch, reset or discard occurred.
+
+### Production scope and transaction contract
+
+Only AcceptInvitation and the new Organization/Application/Notifications/OrganizationNotifications factory change production code. The instance factory follows OrganizationAuditEntries and accepts explicit trusted scalar IDs only: organization, current owner, invitation, newly created invitee membership and accepted user. It returns the existing NotificationDraft with type organization.invitation_accepted, version 1, exactly invitation_id (ULID string), membership_id (canonical positive decimal string) and accepted_user_id (integer), plus organization.users/null-ID target. No model, arbitrary HTTP array, actor authorization, DB query, email, token/hash, URL, role list, text, time or recipient membership input enters the factory. IDs need no new SensitiveParameter labels; existing acceptance email/token and publisher draft protections stay intact.
+
+AcceptInvitation adds only NotificationPublisher and OrganizationNotifications injection. Recipient is owner_user_id from the authoritative organization already locked FOR UPDATE, independent of inviter, accepting actor, roles and client input. The unchanged B publisher resolves that owner's fresh ACTIVE membership and persists its trusted recipient_membership_id; there is no owner bypass. That era is distinct from payload.membership_id, which describes the invitee's newly created membership. B/C schema, vocabulary, validation, access adapter and persistence remain byte-identical.
+
+Inside the existing default PostgreSQL transaction: organization lock → invitation lock/credential and verified identity/state checks → active membership and grants → accepted state → existing invitation.accepted Audit fact → required owner notification → commit. Audit projection/action/payload/actor/subject/role IDs are unchanged. Audit and Notification do not call or import each other; Organization coordinates their public capabilities. Publication is synchronous, before commit, with no second transaction, afterCommit, catch-and-continue, queue, mail or observer. Failure propagates and restores the pending invitation, membership/grants, Audit and any notification insertion. Existing Audit failure stops before publication and still rolls back.
+
+### Producer, security and atomicity evidence
+
+Focused producer run passes **11 tests / 192 assertions** (10 new tests plus the extended existing concurrency case). Final complete-suite JUnit partitions:
+
+| Test file | Passed | Assertions |
+| --- | ---: | ---: |
+| Unit/Organization/OrganizationNotificationsTest | 2 | 20 |
+| Feature/Application/Notifications/InvitationNotificationIntegrationTest | 7 | 117 |
+| Integration/InvitationNotificationAtomicityTest | 1 | 21 |
+| Integration/InvitationConcurrencyTest | 1 | 34 |
+| Architecture/BoundariesTest | 46 | 576 |
+| Feature/Application/Auditing/InvitationAuditIntegrationTest | 24 | 243 |
+| Feature/InvitationDeliveryTest (unchanged F1) | 6 | 53 |
+
+Success assertions inspect all 13 persisted columns: generated ULID, correct organization/owner/actual owner membership era, exact type/version/three-field payload, title Invitation accepted, body User #<accepted ID> accepted an invitation and joined the organization., semantic target/null ID, unread state and creation inside a database-clock interval. SQL capture proves accepted-state UPDATE precedes real Audit INSERT and Notification INSERT, and the publisher INSERT supplies neither created_at nor read_at. An invitation with two actual role grants assigns both; the unchanged Audit fact contains sorted role IDs while Notification contains none. Direct invocation works with an unrelated ambient authenticated actor.
+
+A valid delegated members.invite member issues a roleless invitation to a third user; real HTTP acceptance addresses only the distinct persisted owner, regardless of forged recipient/era/organization/read timestamp fields. Scans of actual payload/title/body/target exclude plaintext token, hash, invitation/accepted/owner/inviter emails and the credential invitation URL. Boolean checks avoid dumping sensitive actual values. A failing test-only publisher proves the command propagates required failure after accepted state, grants and real Audit insertion, then restores the full persisted pre-command invitation and removes acceptance membership/grants/history. With zend.exception_ignore_args=0 the fixed publication failure has no previous exception and no token/hash/email trace.
+
+The physical atomicity test uses the existing guarded disposable database, with no outer Feature transaction. A narrow test-only NotificationPublisher decorator verifies transaction level 1/PDO in transaction, accepted state, membership/grant and real Audit row, delegates to the real publisher, observes the real notification, then throws before transaction completion. After physical rollback: level 0/PDO out of transaction, no accepted membership/grant/Audit/notification, exact persisted pending invitation restored, invitation role grant retained and prior organization.created history retained. No production failure toggle or integrity bypass exists.
+
+Genuine concurrency retains the existing two independent processes/connections and observes both waiting on PostgreSQL locks before releasing the parent. Results remain accepted and rejected:accepted, one membership, accepted invitation and one exact invitation.accepted Audit fact. The winning real acceptance creates exactly one notification (sole organization row), with asserted organization, owner recipient, owner's actual era, invitation/resulting membership/accepted user IDs, exact type/version/copy/target/unread/time. Workers/helper/guard configuration are unchanged. Whole-database teardown removes committed fixtures; no notification-row cleanup or disabled constraints. The reserved disposable database count is zero after all tests.
+
+HTTP and direct replay leave the original sole notification byte-for-byte unchanged, retaining existing 422 accepted rejection and no deduplication key. C owner list returns one exact safe resource with no payload or scope IDs; count rises 0→1. The invitee's list/count remain empty/0 and owner item marking returns fixed 404 without marking it read. C's existing read lifecycle remains fully covered.
+
+Existing failure tests gain no-notification assertions for wrong identity, unverified identity, invalid token, expiry, revocation, accepted state, active/suspended duplicate member, tenant mismatch and spoofed/unknown credentials. New token Form Request and real acceptance grant failure tests prove no publication/Audit. Existing late state and Audit failures assert no notification. Existing issuance/reinvite tests assert credential mail and Audit behavior without Notification; a delegated issuance also asserts no notification. Acceptance sends no new mail. InvitationDelivery, SMTP transport selection/security and credential-bearing email behavior are unchanged. No other producer exists.
+
+### Commands and complete validation
+
+Commands run from the repository root. Backend DB suites were sequential and finished before browser writes. Frontend quality/static/read-only gates could run independently. Logs, JUnit and browser artifacts are under /tmp/coreerp-notification-d-*; no repository dependency/configuration/install change. Backend quality components were invoked individually to collect full-suite JUnit.
+
+| Command | Result |
+| --- | --- |
+| `docker compose exec -T backend php vendor/bin/pest tests/Unit/Notification tests/Feature/Notification tests/Integration/NotificationTransactionRequirementTest.php tests/Feature/Application/Auditing/InvitationAuditIntegrationTest.php tests/Feature/InvitationDeliveryTest.php tests/Feature/OrganizationUsersTest.php tests/Integration/InvitationConcurrencyTest.php tests/Architecture --compact` (before edits) | Baseline 353 passed / 1997 assertions |
+| `docker compose exec -T backend php vendor/bin/pest tests/Unit/Organization/OrganizationNotificationsTest.php tests/Feature/Application/Notifications/InvitationNotificationIntegrationTest.php tests/Integration/InvitationNotificationAtomicityTest.php tests/Integration/InvitationConcurrencyTest.php --compact` | Focused producer 11 passed / 192 assertions |
+| `docker compose exec -T backend php vendor/bin/pest tests/Unit/Notification tests/Feature/Notification tests/Integration/NotificationTransactionRequirementTest.php --compact` | Complete unchanged B/C regression 261 passed / 983 assertions: B 152/308, C 109/675 |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Application tests/Feature/Audit tests/Unit/Audit tests/Unit/Organization tests/Feature/OrganizationUsersTest.php tests/Feature/OrganizationUsersIntegrityTest.php tests/Feature/InvitationDeliveryTest.php tests/Feature/RbacTest.php tests/Integration/AuditTransactionRequirementTest.php tests/Integration/InvitationAuditCommitTest.php tests/Integration/InvitationConcurrencyTest.php tests/Integration/InvitationNotificationAtomicityTest.php tests/Integration/DisposableConcurrencyDatabaseTest.php tests/Unit/DisposableConcurrencyDatabaseTest.php tests/Architecture --compact` | Business/authorization/RBAC/Audit/invitation/F1/concurrency/architecture regression 458 passed / 2860 assertions |
+| `docker compose exec -T backend composer test -- --compact --log-junit=/tmp/coreerp-notification-d-tests.xml` | Complete Pest 758 passed / 4190 assertions; zero failures/errors/skips |
+| `docker compose exec -T backend php vendor/bin/pint app/Modules/Organization/Application/Commands/AcceptInvitation.php app/Modules/Organization/Application/Notifications tests/Unit/Organization/OrganizationNotificationsTest.php tests/Feature/Application/Notifications tests/Integration/InvitationNotificationAtomicityTest.php tests/Integration/InvitationConcurrencyTest.php tests/Architecture/BoundariesTest.php tests/Feature/Application/Auditing/InvitationAuditIntegrationTest.php tests/Feature/Application/MembershipLifecycleTest.php tests/Feature/OrganizationUsersTest.php` | Scoped formatting: 10 files passed |
+| `docker compose exec -T backend composer lint` | Complete read-only Pint: 215 files passed |
+| `docker compose exec -T backend composer analyse` | Larastan level 8: 144 files, no errors/baseline |
+| `docker compose exec -T backend composer dump-autoload --optimize --strict-psr --strict-ambiguous` | Passed: 9147 classes |
+| `docker compose exec -T backend composer validate --strict` | Valid |
+| `docker compose exec -T backend composer check-platform-reqs` | All requirements passed, PHP 8.5.11 |
+| `docker compose exec -T backend composer audit` | No advisories |
+| `docker compose exec -T frontend npm run quality` | ESLint/Prettier/TypeScript, 61 Vitest tests / 10 files and build (125 modules) passed |
+| `docker compose exec -T frontend npm audit` | Zero vulnerabilities |
+| `docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -v /tmp/coreerp-notification-d-browser-artifacts:/tmp/coreerp-playwright-results -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test` | Complete checked-in suite: 5 passed / 0 failed, 14.8s |
+| `docker compose config --quiet`; `docker compose ps` | Valid; all five services healthy |
+| `docker compose exec -T postgres pg_isready -U coreerp -d coreerp`; `docker compose exec -T redis redis-cli ping` | Accepting connections; PONG |
+| `curl -fsS http://localhost:8088/api/v1/health`; `curl -fsS http://localhost:8088/api/v1/ready`; `curl -fsS http://localhost:5174/api/v1/ready`; `curl -fsS -o /tmp/coreerp-notification-d-mailpit-info.json -w '%{http_code}' http://localhost:8026/api/v1/info` | HTTP 200; health/API/proxy status ok; Mailpit reachable |
+| `docker compose exec -T backend php artisan migrate:status` | All seven Ran, batches 1–7; no new or edited migration, no application migration command |
+| `docker compose exec -T postgres psql -U coreerp -d postgres -Atc "SELECT count(*) FROM pg_database WHERE datname = 'coreerp_concurrency_test'"` | Zero: disposable scope absent |
+| `docker compose exec -T postgres psql -U coreerp -d coreerp -Atc "SELECT count(*) FROM organization_notifications"` | One ordinary row from the passing real browser acceptance flow, retained normally |
+| `git diff --check`; `git diff -- frontend`; `git diff -- backend/database/migrations`; `git diff --cached` | Clean whitespace; frontend/migration/staged diffs empty |
+
+Additional inspection used rg, cat/sed, git status/branch/log/diff, JUnit XML extraction and a final Python byte comparison/inventory. The initial expanded focused run passed production/concurrency checks but two rollback fixtures compared transient Eloquent timestamps/order with PostgreSQL's stored timezone/order. Capturing the fresh persisted pre-command row and using a boolean comparison fixed only these assertions; final producer/full suites pass. No production schema mismatch or unresolved gate remains. No hosted CI/deployment or production-volume test was requested or run.
+
+### Files, dependency inventory and manual review
+
+Created four files:
+
+- backend/app/Modules/Organization/Application/Notifications/OrganizationNotifications.php
+- backend/tests/Unit/Organization/OrganizationNotificationsTest.php
+- backend/tests/Feature/Application/Notifications/InvitationNotificationIntegrationTest.php
+- backend/tests/Integration/InvitationNotificationAtomicityTest.php
+
+Modified eleven files: AcceptInvitation.php; Architecture/BoundariesTest.php; Feature/Application/Auditing/InvitationAuditIntegrationTest.php; Feature/Application/MembershipLifecycleTest.php; Feature/OrganizationUsersTest.php; Integration/InvitationConcurrencyTest.php; README.md; docs/architecture/system-overview.md; docs/decisions/0008-notification-center-architecture.md; docs/phases/phase-01-core-platform.md; and this validation record.
+
+Final source edges are **eight imports / seven distinct Notification types / four Organization files**, including **five producer imports / five distinct public types / two Application files**:
+
+| Organization source | Exact Notification Application imports |
+| --- | --- |
+| Application/Commands/AcceptInvitation | Contracts\NotificationPublisher |
+| Application/Notifications/OrganizationNotifications | Data\NotificationDraft, Data\NotificationTarget, Vocabulary\NotificationType, Vocabulary\NotificationTargetType |
+| Infrastructure/Notification/OrganizationNotificationAccess (unchanged) | Contracts\NotificationOrganizationAccess, Data\NotificationMembershipContext |
+| Infrastructure/Providers/OrganizationServiceProvider (unchanged) | Contracts\NotificationOrganizationAccess |
+
+Architecture now allows only the two named Application producer classes, restricts each to its exact types and keeps the factory framework/model-free. All other Organization classes retain the Notification prohibition except the unchanged named access bridge. No consumer/query/read contracts, validators, persistence ports or Infrastructure/Presentation implementation become producer dependencies. Domain has no Notification edge; Notification imports no Organization/Identity/Audit; Audit and Identity have no Notification edge. No other module gets a producer exception.
+
+Final scope comparison proves frontend (including tests), all seven migrations, complete Notification B/C source, Identity/Audit source, Organization access bridge/provider, InvitationDelivery/Mailable, OrganizationAuditEntries and disposable helper/worker are byte-identical to C HEAD. Routes, controllers, requests, resources, Domain/authorization, manifests/locks, environment and Compose are untouched. Browser-created users/business/history/mail and the new ordinary notification remain normal local data; no row cleanup, trigger/FK disabling or app database reset occurred.
+
+Review the locked persisted owner selection, payload membership versus recipient era, unchanged Audit projection, ordering/uncaught required failure, database-clock defaults, narrow import allowlists and test-only post-insert decorator. The existing coarse organization lock remains appropriate for present administrative scale; no new ownership-transfer, broken-owner workflow, producer dedup/retry guarantee or consumer revocation linearization is introduced. Live pagination/read-all statement visibility, privileged SQL threat model, retention/least privilege/read throttling/production plans/deployment hardening remain the B/C limits. An interrupted disposable run can leave its fixed database; existing guards refuse reuse/drop and require verified recovery. All requested local gates were verified.
+
+D is complete locally and stops here. Phase 1.6 remains incomplete. Recommendation after review/commit and explicit authorization: **1.6E — Notification Center UI & Browser Flow**, consuming C with safe plain-text rendering, tenant/era state reset, list/count/read controls, semantic target authorization and browser coverage of the real invitation-acceptance owner notification. No E work, other producers, generic notification email, jobs/queues/Horizon, retry/outbox, polling frontend or realtime/Reverb is included.

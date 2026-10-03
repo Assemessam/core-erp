@@ -3,7 +3,9 @@
 namespace App\Modules\Organization\Application\Commands;
 
 use App\Modules\Audit\Application\Contracts\AuditRecorder;
+use App\Modules\Notification\Application\Contracts\NotificationPublisher;
 use App\Modules\Organization\Application\Auditing\OrganizationAuditEntries;
+use App\Modules\Organization\Application\Notifications\OrganizationNotifications;
 use App\Modules\Organization\Application\Operations\AssignMembershipRole;
 use App\Modules\Organization\Domain\Invitations\InvitationRejected;
 use App\Modules\Organization\Domain\Invitations\InvitationRules;
@@ -17,7 +19,13 @@ use Illuminate\Support\Facades\DB;
 /** Identity values must come from a trusted authenticated adapter, never request payload. */
 class AcceptInvitation
 {
-    public function __construct(private readonly AssignMembershipRole $assign, private readonly AuditRecorder $audit, private readonly OrganizationAuditEntries $entries) {}
+    public function __construct(
+        private readonly AssignMembershipRole $assign,
+        private readonly AuditRecorder $audit,
+        private readonly OrganizationAuditEntries $entries,
+        private readonly NotificationPublisher $notifications,
+        private readonly OrganizationNotifications $notificationDrafts,
+    ) {}
 
     public function handle(int $actorUserId, #[\SensitiveParameter] string $actorEmail, bool $verified, string $invitationId, #[\SensitiveParameter] string $token): Organization
     {
@@ -43,6 +51,10 @@ class AcceptInvitation
             $assignedRoleIds = array_values($membership->roles()->get()->map(fn (Role $role): string => $role->id)->all());
             $this->audit->record($this->entries->invitationAccepted(
                 $organization->id, $actorUserId, $invitation->id, $membership->id, $membership->user_id, $assignedRoleIds,
+            ));
+            // Both required facts share the business transaction and must propagate any failure.
+            $this->notifications->publish($this->notificationDrafts->invitationAccepted(
+                $organization->id, $organization->owner_user_id, $invitation->id, $membership->id, $membership->user_id,
             ));
 
             return $organization;

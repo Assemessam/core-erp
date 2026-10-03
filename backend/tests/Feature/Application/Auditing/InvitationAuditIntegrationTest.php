@@ -45,6 +45,7 @@ it('records issuance from persisted grants and canonical persisted UTC expiratio
         'role_ids' => AuditFacts::sorted([$this->first->id, $this->second->id]),
     ]);
     expect($invite->roles()->count())->toBe(2);
+    expect(DB::table('organization_notifications')->where('organization_id', $this->org->id)->exists())->toBeFalse();
     Mail::assertSent(OrganizationInvitationMail::class, 1);
 });
 
@@ -59,6 +60,7 @@ it('records replacement as exactly two facts with the final replacement ID', fun
         ['state' => 'pending', 'expires_at' => $new->fresh()->expires_at->utc()->format('Y-m-d\TH:i:s.u\Z'), 'role_ids' => [$this->second->id]]);
     expect(DB::table('audit_events')->where('organization_id', $this->org->id)->where('action', 'like', 'invitation.%')->count())->toBe(2);
     expect(fn () => app(AcceptInvitation::class)->handle($this->invitee->id, $this->invitee->email, true, $old->id, $this->token))->toThrow(InvitationRejected::class, 'revoked');
+    expect(DB::table('organization_notifications')->where('organization_id', $this->org->id)->exists())->toBeFalse();
     Mail::assertSent(OrganizationInvitationMail::class, 1);
 });
 
@@ -127,6 +129,7 @@ it('produces no acceptance fact on rejected identity credentials or fresh state'
     $count = DB::table('audit_events')->count();
     expect(fn () => app(AcceptInvitation::class)->handle($this->invitee->id, $email, $verified, $this->invite->id, $token))->toThrow(InvitationRejected::class);
     expect(DB::table('audit_events')->count())->toBe($count);
+    expect(DB::table('organization_notifications')->where('organization_id', $this->org->id)->exists())->toBeFalse();
 })->with(['invalid', 'wrong email', 'unverified', 'expired', 'revoked', 'accepted', 'active member', 'suspended member']);
 
 it('rolls back issuance or replacement on either required audit failure and discards its mail callback', function (string $operation, int $failAt) {
@@ -207,6 +210,7 @@ it('rolls back accepted membership grants and state on failure before or after a
     expect($this->org->memberships()->where('user_id', $this->invitee->id)->exists())->toBeFalse();
     expect(DB::table('organization_membership_role')->where('organization_id', $this->org->id)->exists())->toBeFalse();
     expect(DB::table('audit_events')->count())->toBe($before);
+    expect(DB::table('organization_notifications')->where('organization_id', $this->org->id)->exists())->toBeFalse();
 })->with([false, true]);
 
 it('excludes credentials email and URLs from exact invitation audit snapshots', function () {

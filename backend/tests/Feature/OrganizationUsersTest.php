@@ -9,6 +9,7 @@ use App\Modules\Organization\Domain\Invitations\InvitationState;
 use App\Modules\Organization\Domain\Memberships\MembershipStatus;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use App\Modules\Organization\Infrastructure\Mail\OrganizationInvitationMail;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
 function usersOrganization(?User $owner = null): Organization
@@ -119,6 +120,7 @@ it('rejects wrong identity invalid revoked expired and unverified acceptance', f
         $response->assertJsonPath('reason', $reason);
     }
     expect($org->memberships()->count())->toBe(1);
+    expect(DB::table('organization_notifications')->where('organization_id', $org->id)->exists())->toBeFalse();
 })->with([['wrong', 422, 'email_mismatch'], ['unverified', 403, null], ['invalid', 422, 'invalid'], ['revoked', 422, 'revoked'], ['expired', 422, 'expired']]);
 
 it('reinvites by revoking the previous credential and revocation is repeatable', function () {
@@ -200,6 +202,7 @@ it('rejects foreign nested resources and roles even for an owner of both tenants
     $this->postJson($base.'/invitations', ['email' => $user->email, 'roles' => [$foreignRole->id]])->assertUnprocessable();
     $this->putJson($base.'/members/'.$org->memberships()->sole()->id.'/roles', ['roles' => [$foreignRole->id]])->assertUnprocessable();
     expect($org->invitations()->count())->toBe(0);
+    expect(DB::table('organization_notifications')->whereIn('organization_id', [$org->id, $other->id])->exists())->toBeFalse();
 });
 
 it('delegates view and roleless invitations without lifecycle or role escalation', function () {
@@ -236,6 +239,7 @@ it('never accepts guest or spoofed identity payload and hides unknown credential
     $invalid = $this->postJson('/api/v1/invitations/'.$invitation->id.'/accept', ['token' => str_repeat('0', 64)])->assertUnprocessable()->json();
     expect($unknown)->toBe($invalid);
     expect($org->memberships()->count())->toBe(1);
+    expect(DB::table('organization_notifications')->where('organization_id', $org->id)->exists())->toBeFalse();
 });
 
 it('allows repeatable roleless delegated revocation and rejects malformed role selection', function () {
