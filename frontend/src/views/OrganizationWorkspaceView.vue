@@ -54,31 +54,44 @@ onBeforeUnmount(() => generation++)
         {{ organization.name }}
       </h1>
       <p class="mt-4 text-slate-300">Organization workspace</p>
-      <RouterLink
-        :to="{
-          name: 'organization-roles',
-          params: { organizationId: organization.id },
-        }"
-        class="mt-6 inline-block text-teal-300"
-        >Roles &amp; Permissions</RouterLink
+      <nav
+        aria-label="Organization workspace"
+        class="mt-6 flex flex-wrap gap-x-6 gap-y-3"
       >
-      <RouterLink
-        :to="{
-          name: 'organization-users',
-          params: { organizationId: organization.id },
-        }"
-        class="ml-6 text-teal-300"
-        >Users</RouterLink
-      >
-      <RouterLink
-        v-if="canViewAudit"
-        :to="{
-          name: 'organization-audit',
-          params: { organizationId: organization.id },
-        }"
-        class="ml-6 text-teal-300"
-        >Audit Trail</RouterLink
-      >
+        <RouterLink
+          :to="{
+            name: 'organization-roles',
+            params: { organizationId: organization.id },
+          }"
+          class="text-teal-300"
+          >Roles &amp; Permissions</RouterLink
+        >
+        <RouterLink
+          :to="{
+            name: 'organization-users',
+            params: { organizationId: organization.id },
+          }"
+          class="text-teal-300"
+          >Users</RouterLink
+        >
+        <RouterLink
+          v-if="canViewAudit"
+          :to="{
+            name: 'organization-audit',
+            params: { organizationId: organization.id },
+          }"
+          class="text-teal-300"
+          >Audit Trail</RouterLink
+        >
+        <RouterLink
+          :to="{
+            name: 'organization-notifications',
+            params: { organizationId: organization.id },
+          }"
+          class="text-teal-300"
+          >Notifications</RouterLink
+        >
+      </nav>
       <p class="mt-2 text-slate-400">
         This workspace confirms your organization context. ERP modules arrive in
         later milestones.

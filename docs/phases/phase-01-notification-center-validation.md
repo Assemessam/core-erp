@@ -1,6 +1,6 @@
 # Phase 1.6 — Notification Center validation
 
-Current status: B approved/committed as 1627633; C approved/committed as 45ceea9; **D complete locally, awaiting review**. Phase 1.6 remains incomplete; frontend E is pending explicit authorization. B/C sections preserve their original checkpoint evidence; D evidence follows them.
+Current status: B approved/committed as 1627633; C approved/committed as 45ceea9; D approved/committed as dda6cc3; **E complete locally, awaiting review**. Phase 1.6 remains incomplete; independent F review is pending and has not begun. B/C/D sections preserve their original checkpoint evidence; E evidence follows them.
 
 ## Checkpoint B: Persistence & Safety Contracts
 
@@ -301,3 +301,96 @@ Final scope comparison proves frontend (including tests), all seven migrations, 
 Review the locked persisted owner selection, payload membership versus recipient era, unchanged Audit projection, ordering/uncaught required failure, database-clock defaults, narrow import allowlists and test-only post-insert decorator. The existing coarse organization lock remains appropriate for present administrative scale; no new ownership-transfer, broken-owner workflow, producer dedup/retry guarantee or consumer revocation linearization is introduced. Live pagination/read-all statement visibility, privileged SQL threat model, retention/least privilege/read throttling/production plans/deployment hardening remain the B/C limits. An interrupted disposable run can leave its fixed database; existing guards refuse reuse/drop and require verified recovery. All requested local gates were verified.
 
 D is complete locally and stops here. Phase 1.6 remains incomplete. Recommendation after review/commit and explicit authorization: **1.6E — Notification Center UI & Browser Flow**, consuming C with safe plain-text rendering, tenant/era state reset, list/count/read controls, semantic target authorization and browser coverage of the real invitation-acceptance owner notification. No E work, other producers, generic notification email, jobs/queues/Horizon, retry/outbox, polling frontend or realtime/Reverb is included.
+
+
+## Checkpoint E: Notification Center UI & Browser Flow
+
+Date: 2026-10-03. Status: **1.6E complete locally, awaiting review. Phase 1.6 is incomplete; independent 1.6F review is pending and has not begun.** D is the approved committed baseline dda6cc3. Only E frontend/UI/browser work was authorized. No backend defect or required API change was found, and no other producer, generic notification email, queue/Horizon, realtime/Echo/Reverb, preferences or final independent review was added.
+
+### Preflight and frontend architecture
+
+Preflight passed before editing: branch exactly feature/notifications, clean tracked/untracked working tree, HEAD dda6cc3 (feat: notify owner when invitation is accepted). Read AGENTS.md, ADR 0008 and B/C/D validation; inspected the existing router/App shell, route organization context, Users/Audit views and API clients, generation/error/accessibility conventions, notification resources/read actions, actual AcceptInvitation publication, existing invitation acceptance Playwright test and Mailpit helpers. Baseline frontend quality passed ESLint/Prettier/TypeScript, 61 tests in 10 files and production build (125 modules). No stage, commit, push, branch switch, reset or discard occurred.
+
+The repository uses App.vue and flat authenticated/verified routes. App now provides one mounted useOrganizationNotifications composable driven only by the current organization route. NotificationBell is a native keyboard-operable button with real-count accessible label, no zero badge and visual 99+ cap. The workspace includes an ordinary Notifications link alongside unchanged Users/Roles/Audit destinations; wrapping navigation preserves small-screen behavior and existing Audit capability logic. No notification permission/capability or role-name check exists.
+
+Notification API types contain only id/type/payload_version/title/body/target/read_at/created_at and list cursor metadata. The semantic client encodes organization/item IDs, requests per_page=25 and passes only the opaque server cursor; it uses exactly the four existing C endpoints. There is no raw payload, recipient/era/tenant field, generic request method, filter, identity lookup, extra endpoint or frontend Audit coupling.
+
+Shell state shares only current organization/count/loading/feedback and epoch. Page-local rows/cursor/read confirmations are never cached globally, placed in Pinia or persisted in browser storage. Count refresh runs on visible context entry, focus/visibility restoration, successful explicit reads and manual Refresh. The 60-second timer skips hidden documents and concurrent requests. Context change/unmount removes listeners/timers and aborts/increments request serials. Manual/mutation count refresh supersedes older work; guards cover success, failure and finally. Automatic polling never fetches history.
+
+The dedicated /app/organizations/:organizationId/notifications page shows organization context, newest-first stored snapshots, UTC time, Read/Unread text, Refresh, Mark all as read, Mark as read, Load older and clear loading/empty/error/end states. It does not mark on opening. Mark-one waits for 204 then records a deliberate local read confirmation without fabricating read_at or changing list order/cursor, and refetches authoritative count. Refresh subsequently retrieves server timestamps. Mark-all refetches first page/count; a later committed unread row remains reflected. Refresh resets rows/cursor and retrieves the first page. Continuation appends server order using next_cursor, blocks concurrent calls and performs simple ID deduplication without generating cursors/totals.
+
+Synchronous scope epochs and page generations clear every prior organization state/target and reject late list/count/read-one/read-all/continuation/context successes and failures. Current-scope 401/403/404 clears rows/count/cursor/loading/errors/read confirmations and stops automatic polling. It displays existing normalized feedback and an organization navigation link; only explicit Refresh or a context change rechecks access. Generic count 5xx/network failures retain safe loaded content and use quiet status feedback. Existing auth/routing and backend membership-era scope remain authoritative; no custom session or membership reconstruction occurs.
+
+Snapshots render through ordinary Vue escaping, never v-html. Only organization.invitation_accepted/version 1 with exactly organization.users/null-ID target maps to the current organization-users named route. Unknown type/version, unsupported target, URL string, unexpected keys and nonnull ID show safe text without View. No accepted-user name/email request exists. Times parse explicit API UTC and use Intl timeZone=UTC; the time element retains exact API datetime/title. Native buttons/links, headings, ordered-list/articles, status/alert messages, disabled feedback and explicit non-color read labels preserve existing focus conventions.
+
+### Automated and real browser evidence
+
+Two new frontend unit files contain **29 tests**: 26 component/behavior tests and 3 client/target/time tests. The existing route-guard test now covers both Audit and Notifications with guest, unverified and verified actors. The final focused run passes **35 tests / 3 files**; complete Vitest passes **91 tests / 12 files**.
+
+Behavior tests cover initial/no-auto-read/empty/error/end states, zero/positive/99+ badges and native bell navigation; one/all 204 read flows with no timestamp fabrication; authoritative later-unread count after read-all; opaque pagination/order/dedup/double-click/Refresh reset; initial/older/mutation failures; every 401/403/404 path; ordinary background 503 retention; stale tenant and superseded refresh count/list responses; stale read-one/read-all/continuation success and failure; escaped HTML-like title/body; unknown formats/targets; UTC equivalence and invalid time fallback. Fake-clock tests cover 60-second polling, hidden entry/tab behavior, visibility/focus refresh, overlap prevention, route exit and unmount cleanup without a new page request on teardown.
+
+One new Playwright test uses normal registration/verification, organization creation, roleless invitation through SMTP/Mailpit, invited-user registration/verification and actual acceptance UI. The notification is produced by **AcceptInvitation → NotificationPublisher**; no direct organization_notifications fixture or database write is used. Refocus refreshes the owner's badge to one without a 60-second wait. Native bell keyboard Space opens history; the exact stored Invitation accepted title/body appears Unread. The test asserts all eight public resource keys and checks displayed content for absence of token/emails/invitation URL/raw payload/recipient-era fields without logging those values. Explicit Mark as read refreshes badge to zero; reload retains Read and removes the action. Keyboard Enter on View opens the same organization's authorized Users page.
+
+The real invitee's collection/count are []/0; an authenticated CSRF-valid POST attempting to mark the owner's notification returns 404. The same owner creates Organization B, whose badge is zero and page is empty with no A row, then returns to A and sees its read history. Backend regression separately covers foreign tenants and historical membership-era denial. Shared Mailpit/register/verify helpers were extracted from the existing Users browser test without changing its workflow.
+
+Final targeted browser run: **1 passed / 0 failed, 10.1s**. Final complete browser run: **6 passed / 0 failed, 17.0s**, including existing auth/logout, organization isolation, roles, Users/invitation lifecycle and Audit filter/pagination/refresh flows. No seeded notification or polling delay is used.
+
+### Backend regression database boundary
+
+An initial focused/full run against the configured development database encountered 11 existing Notification persistence-test failures: those rollback-protected fixtures assume the entire notification table starts empty, while D's successful browser flow had already retained an ordinary notification. Constraint-alteration fixtures also validate those existing rows. This was a test database precondition, not a blocking notification API defect. No retained application row was deleted, no backend test or production code was edited, and no constraint/trigger was disabled to make the run pass.
+
+The rerun used a temporary out-of-repository runner /tmp/coreerp-notification-e-validation.py and fresh coreerp_notification_e_validation. The runner asserts that its fixed target is neither coreerp, postgres nor the existing concurrency target, refuses any pre-existing target, records ownership only after its own CREATE DATABASE and bootstraps Laravel to verify APP_ENV=testing, default driver pgsql and the actual connected database name before migration. Existing seven migrations run only in this newly owned validation database. Focused/full Pest execute sequentially with explicit environment overrides; the runner's finally block drops only the target it created. The existing guarded coreerp_concurrency_test helper remains unchanged and uses its separate target for physical commit/concurrency tests. All backend database suites finished before the E browser reruns. Final pg_database inspection finds neither disposable target.
+
+Final focused backend run: **318 passed / 1751 assertions**, comprising unchanged B/C Notification security/persistence/query/read coverage (261/983), D producer/atomicity/real acceptance concurrency (11/192) and architecture (46/576). Final complete Pest: **758 passed / 4190 assertions**, with zero failures/errors/skips. Complete-suite JUnit confirms Architecture/BoundariesTest 46/576, InvitationConcurrencyTest 1/34, InvitationNotificationAtomicityTest 1/21 and InvitationAuditCommitTest 3/32. This preserves the real Business + Audit + Notification transaction evidence without changing backend semantics.
+
+### Commands and final local gates
+
+Commands run from the repository root. Logs/JUnit/browser artifacts are under /tmp/coreerp-notification-e-*. Backend database commands below execute only inside the guarded fresh validation-database runner described above; they are not application-database migration/reset instructions.
+
+| Command | Result |
+| --- | --- |
+| `docker compose exec -T frontend npm test -- src/__tests__/Notifications.test.ts src/__tests__/NotificationsClient.test.ts src/__tests__/AuthRouting.test.ts` | Final focused: 35 passed / 3 files |
+| `docker compose exec -T frontend npm run quality` | ESLint, Prettier, TypeScript, 91 Vitest tests / 12 files and production build (131 modules) passed |
+| `docker compose exec -T frontend npm run lint`; `docker compose exec -T frontend npx prettier --check e2e/notifications.spec.ts` | Final browser assertion adjustment also passed lint/format |
+| `docker compose exec -T frontend npm audit` | Zero vulnerabilities |
+| `docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -v /tmp/coreerp-notification-e-browser-artifacts:/tmp/coreerp-playwright-results -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test e2e/notifications.spec.ts` | 1 passed / 0 failed, 10.1s |
+| Same browser command with `npx playwright test` | Complete suite: 6 passed / 0 failed, 17.0s |
+| `docker compose exec -T -e APP_ENV=testing -e DB_DATABASE=coreerp_notification_e_validation -e DB_URL= backend php artisan migrate --force --no-interaction` | Seven existing migrations applied only after fresh-database ownership and actual-connection guard |
+| `docker compose exec -T -e APP_ENV=testing -e DB_DATABASE=coreerp_notification_e_validation -e DB_URL= backend php vendor/bin/pest tests/Unit/Notification tests/Feature/Notification tests/Integration/NotificationTransactionRequirementTest.php tests/Unit/Organization/OrganizationNotificationsTest.php tests/Feature/Application/Notifications/InvitationNotificationIntegrationTest.php tests/Integration/InvitationNotificationAtomicityTest.php tests/Integration/InvitationConcurrencyTest.php tests/Architecture --compact` | 318 passed / 1751 assertions |
+| `docker compose exec -T -e APP_ENV=testing -e DB_DATABASE=coreerp_notification_e_validation -e DB_URL= backend composer test -- --compact --log-junit=/tmp/coreerp-notification-e-tests.xml` | 758 passed / 4190 assertions; zero failures/errors/skips |
+| `docker compose exec -T backend composer lint` | Read-only Pint: 215 files passed |
+| `docker compose exec -T backend composer analyse` | Larastan level 8: 144 files, no errors/baseline |
+| `docker compose exec -T backend composer validate --strict` | Valid |
+| `docker compose exec -T backend composer check-platform-reqs` | All requirements passed; PHP 8.5.11 |
+| `docker compose exec -T backend composer audit` | No advisories |
+| `docker compose config --quiet`; `docker compose ps` | Valid; all five services healthy |
+| `docker compose exec -T postgres pg_isready -U coreerp -d coreerp`; `docker compose exec -T redis redis-cli ping` | Accepting connections; PONG |
+| `curl -fsS http://localhost:8088/api/v1/health`; `curl -fsS http://localhost:8088/api/v1/ready`; `curl -fsS http://localhost:5174/api/v1/ready`; `curl -fsS -o /tmp/coreerp-notification-e-mailpit-info.json -w '%{http_code}' http://localhost:8026/api/v1/info` | API liveness/readiness and frontend proxy status ok; Mailpit 200 |
+| `docker compose exec -T backend php artisan migrate:status` | All seven Ran; no new/edited migration and no application database migration/reset |
+| `docker compose exec -T postgres psql -U coreerp -d postgres -Atc "SELECT count(*) FROM pg_database WHERE datname IN ('coreerp_concurrency_test', 'coreerp_notification_e_validation')"` | Zero: both disposable scopes absent |
+| `git diff --check`; `git diff -- backend`; `git diff -- backend/app`; `git diff -- backend/database/migrations`; `git diff --cached` | Clean whitespace; all backend/production/migration/staged diffs empty |
+
+No dependency, environment, Compose, CI, backend routing or migration changes. No production-volume/deployment/hosted CI execution was requested or performed. All requested local gates were verified.
+
+### File inventory, visual checks and review handoff
+
+Created eight frontend files:
+
+- frontend/src/lib/notifications.ts
+- frontend/src/composables/useOrganizationNotifications.ts
+- frontend/src/components/NotificationBell.vue
+- frontend/src/views/OrganizationNotificationsView.vue
+- frontend/src/__tests__/NotificationsClient.test.ts
+- frontend/src/__tests__/Notifications.test.ts
+- frontend/e2e/notifications.spec.ts
+- frontend/e2e/support/invitations.ts
+
+Modified five frontend files: App.vue, router/index.ts, views/OrganizationWorkspaceView.vue, __tests__/AuthRouting.test.ts and e2e/organization-users.spec.ts. Modified five documents: README.md, this validation record, ADR 0008, system overview and Phase 1 roadmap. Existing Audit view/client and all 240 tracked backend files are byte-identical to dda6cc3, including backend tests and all seven migrations. Backend/frontend manifests/locks, Compose and CI are unchanged. New route follows existing guards; no Notification → Audit frontend import or generic activity-center abstraction exists. Git remains feature/notifications at dda6cc3 with an empty index; E is unstaged/uncommitted.
+
+Viewed the final real-browser Notification Center screenshots at desktop 1280×806 and mobile 390px (844px viewport, full-page capture). Header/actions/cards/body/time/View/read badge wrap cleanly; the mobile document width does not exceed innerWidth. Existing native focus styling is retained. Browser keyboard checks cover native bell Space navigation, Tab reaching an interactive element and View Enter navigation. Artifacts: /tmp/coreerp-notification-e-browser-artifacts/notification-desktop.png and notification-mobile.png. Long malicious/HTML-like and unknown content is covered by escaped component tests; older/loading/error variants are covered behaviorally rather than seeded into the real browser producer flow.
+
+Review the shell route-derived scope, epoch/request/generation guards on both outcomes, denied-scope stop/reset behavior, explicit read confirmation after 204, statement-scoped read-all refetch, opaque continuation lock, finite target mapping and actual producer browser assertions. Review helper extraction and the wrapping workspace navigation with Audit capability unchanged. These are the E implementation handoff points, not an independent F review.
+
+Known limits: count polling is foreground-only and approximate, with focus/visibility refresh; history refresh is manual and never automatically reordered. Access changes clear content when the next authorized operation reports denial; hidden tabs skip polls until visible. Mark-one does not display a fabricated read timestamp, and read-all resets loaded history to the first page. Loaded older rows accumulate only in the mounted page until Refresh/context exit. No filters, global history/count, realtime, extra producer, delivery preferences or generic notification email exists. Existing B/C retention, privileged SQL and deployment/read-scale limits remain. Regression runs require a fresh guarded database because existing persistence fixtures assume an empty notification table; application browser history is retained normally.
+
+**E stops here.** Recommendation after E review/checkpoint commit and explicit authorization: **Phase 1.6F — Final Independent Security & Code Review**. F has not begun; Phase 1.6 is not marked complete.

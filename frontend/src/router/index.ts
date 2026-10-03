@@ -14,8 +14,15 @@ import OrganizationsView from '../views/OrganizationsView.vue'
 import OrganizationWorkspaceView from '../views/OrganizationWorkspaceView.vue'
 import OrganizationRolesView from '../views/OrganizationRolesView.vue'
 import OrganizationAuditView from '../views/OrganizationAuditView.vue'
+import OrganizationNotificationsView from '../views/OrganizationNotificationsView.vue'
 
 export const routes = [
+  {
+    path: '/app/organizations/:organizationId/notifications',
+    name: 'organization-notifications',
+    component: OrganizationNotificationsView,
+    meta: { requiresAuth: true, requiresVerified: true },
+  },
   {
     path: '/app/organizations/:organizationId/audit',
     name: 'organization-audit',
