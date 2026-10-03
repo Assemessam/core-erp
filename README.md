@@ -6,6 +6,8 @@ CoreERP is a portfolio-grade ERP under active development, built to demonstrate 
 
 ## Architecture
 
+**Phase 1.6B — Notification Persistence & Safety Contracts is complete locally, awaiting review.** Phase 1.6 now means Notification Center foundation and remains incomplete. Storage is private to organization/user/membership era: suspension/reactivation retains history; removal and rejoin with a new membership do not restore the prior era. No notification HTTP API, business producer or UI is implemented yet. Generic email delivery, queues/Horizon, retries/outbox, realtime and preferences are deferred separately. See [ADR 0008](docs/decisions/0008-notification-center-architecture.md) and [B validation](docs/phases/phase-01-notification-center-validation.md).
+
 ```text
 Vue SPA → Laravel REST API (/api/v1) → PostgreSQL
         → Sanctum / Fortify         → Redis sessions/cache
@@ -70,7 +72,7 @@ docker compose run --rm backend php artisan migrate --no-interaction
 docker compose up -d --wait
 ```
 
-The schema includes users, password-reset/session scaffolding, organizations, memberships, organization roles, relational permission grants, membership status, invitations and invitation-role grants. There are no seeded users. Redis stores sessions, so the standard `sessions` table is unused. No Sanctum personal-access-token migration or token issuance is added.
+The schema includes users, password-reset/session scaffolding, organizations, memberships, organization roles, relational permission grants, membership status, invitations, invitation-role grants, Audit events and membership-era organization notifications. Notification storage has no ordinary application producer in B. There are no seeded users. Redis stores sessions, so the standard `sessions` table is unused. No Sanctum personal-access-token migration or token issuance is added.
 
 - Frontend: <http://localhost:5174>
 - API liveness: <http://localhost:8088/api/v1/health>

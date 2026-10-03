@@ -2,12 +2,15 @@
 
 use App\Modules\Audit\Application\Contracts\AuditHistoryAccess;
 use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
+use App\Modules\Notification\Application\Contracts\NotificationOrganizationAccess;
+use App\Modules\Notification\Application\Data\NotificationMembershipContext;
 use App\Modules\Organization\Application\Commands\RenameOrganization;
 use App\Modules\Organization\Application\Queries\ListOrganizations;
 use App\Modules\Organization\Infrastructure\Audit\OrganizationAuditHistoryAccess;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPolicy;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\Organization;
 use App\Modules\Organization\Infrastructure\Eloquent\Models\OrganizationMembership;
+use App\Modules\Organization\Infrastructure\Notification\OrganizationNotificationAccess;
 use App\Modules\Organization\Infrastructure\Providers\OrganizationServiceProvider;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationInvitationController;
@@ -85,6 +88,32 @@ arch('Audit Presentation delegates persistence and business authorization')
     ->not->toUse(['App\\Modules\\Audit\\Infrastructure', DB::class, DatabaseManager::class, ConnectionInterface::class,
         'Illuminate\\Database', Gate::class, Auth::class]);
 
+arch('Notification never consumes Organization Identity or Audit internals')
+    ->expect('App\\Modules\\Notification')
+    ->not->toUse(['App\\Modules\\Organization', 'App\\Modules\\Identity', 'App\\Modules\\Audit']);
+
+arch('Notification Application is framework independent')
+    ->expect('App\\Modules\\Notification\\Application')
+    ->not->toUse(['Illuminate', 'Laravel', 'Symfony', 'App\\Modules\\Notification\\Infrastructure',
+        'App\\Modules\\Notification\\Presentation', 'app', 'auth', 'request', 'response', 'session',
+        'resolve', 'config', 'event', 'dispatch']);
+
+arch('Audit and Identity have no Notification dependency')
+    ->expect(['App\\Modules\\Audit', 'App\\Modules\\Identity'])->not->toUse('App\\Modules\\Notification');
+
+arch('Organization Domain and Application publish no notifications in checkpoint B')
+    ->expect(['App\\Modules\\Organization\\Domain', 'App\\Modules\\Organization\\Application'])
+    ->not->toUse('App\\Modules\\Notification');
+
+arch('only the approved Organization adapter and provider consume Notification')
+    ->expect('App\\Modules\\Organization')->not->toUse('App\\Modules\\Notification')
+    ->ignoring([OrganizationNotificationAccess::class, OrganizationServiceProvider::class]);
+
+arch('Organization composition consumes only the Notification access contract and context')
+    ->expect([OrganizationNotificationAccess::class, OrganizationServiceProvider::class])
+    ->not->toUse('App\\Modules\\Notification')
+    ->ignoring([NotificationOrganizationAccess::class, NotificationMembershipContext::class]);
+
 $appDirectory = dirname(__DIR__, 2).'/app';
 $moduleDirectories = glob($appDirectory.'/Modules/*', GLOB_ONLYDIR) ?: [];
 $controllerNamespaces = ['App\\Http\\Controllers'];
@@ -108,6 +137,28 @@ it('keeps checkpoint E Audit without a domain layer or Eloquent mutation model',
     }
     expect(is_dir($appDirectory.'/Modules/Audit/Presentation/Http'))->toBeTrue();
     expect(is_dir($appDirectory.'/Modules/Audit/Application/Queries'))->toBeTrue();
+});
+
+it('keeps checkpoint B Notification limited to persistence without future layers or producers', function () use ($appDirectory) {
+    foreach (['Domain', 'Presentation', 'Infrastructure/Eloquent', 'Infrastructure/Mail', 'Infrastructure/Jobs', 'Application/Queries', 'Application/Commands'] as $directory) {
+        expect(is_dir($appDirectory.'/Modules/Notification/'.$directory))->toBeFalse();
+    }
+    expect(is_dir($appDirectory.'/Modules/Notification/Application'))->toBeTrue();
+    expect(is_dir($appDirectory.'/Modules/Notification/Infrastructure'))->toBeTrue();
+});
+
+it('keeps notification transaction ownership and default connection explicit', function () use ($appDirectory) {
+    $parser = (new ParserFactory)->createForHostVersion();
+    $finder = new NodeFinder;
+    $nodes = $parser->parse(file_get_contents($appDirectory.'/Modules/Notification/Infrastructure/Persistence/DatabaseNotificationPublisher.php')) ?? [];
+    $violations = $finder->find($nodes, fn (Node $node): bool => ($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall)
+        && $node->name instanceof Node\Identifier
+        && in_array(strtolower($node->name->toString()), ['transaction', 'begintransaction', 'commit', 'rollback', 'aftercommit', 'dispatch', 'notify'], true));
+    expect($violations)->toBeEmpty();
+    $connections = $finder->find($nodes, fn (Node $node): bool => $node instanceof Node\Expr\StaticCall
+        && $node->name instanceof Node\Identifier && $node->name->toString() === 'connection');
+    expect($connections)->toHaveCount(1);
+    expect($connections[0]->args)->toBeEmpty();
 });
 
 it('keeps the Audit history reader read only and scoped in Infrastructure', function () use ($appDirectory) {
@@ -139,6 +190,14 @@ it('keeps audit transaction ownership in the caller', function () use ($appDirec
 
 foreach ($moduleDirectories as $directory) {
     $namespace = 'App\\Modules\\'.basename($directory);
+    if (basename($directory) !== 'Notification') {
+        arch(basename($directory).' does not consume private Notification implementation')
+            ->expect($namespace)->not->toUse([
+                'App\\Modules\\Notification\\Infrastructure', 'App\\Modules\\Notification\\Presentation',
+                'App\\Modules\\Notification\\Application\\Validation', 'App\\Modules\\Notification\\Application\\Content',
+                'App\\Modules\\Notification\\Application\\Exceptions',
+            ]);
+    }
     if (basename($directory) !== 'Audit') {
         arch(basename($directory).' does not consume private Audit implementation')
             ->expect($namespace)->not->toUse([
