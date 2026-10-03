@@ -11,7 +11,7 @@
 | **1.3.5 DDD Modular Monolith Refactor** | Establish bounded contexts, pragmatic Application boundaries, CQRS-lite, and architecture guardrails while preserving behavior | **Complete locally; awaiting review** |
 | **1.4 User invitations / organization users** | Verified email-bound invitations, active/suspended membership, owner-managed roles and lifecycle, tenant constraints | **Implemented locally; awaiting review** |
 | 1.5 Audit trail | Record relevant security and domain activity | B/C/D/E approved/committed; F UI/browser flow complete locally, awaiting review |
-| 1.6 Notification Center foundation | Private membership-era notifications, query/read API, explicit producer and UI | A approved with era revision; B persistence/contracts complete locally for review; C onward pending; phase incomplete |
+| 1.6 Notification Center foundation | Private membership-era notifications, query/read API, explicit producer and UI | A approved with era revision; B approved/committed; C query/read API complete locally for review; D/E pending; phase incomplete |
 | 1.7 Real-time foundation | Authenticated real-time transport and event boundaries | Planned; not implemented |
 | 1.8 Security and tenant-isolation hardening | Adversarial isolation tests and security review | Planned; not implemented |
 
@@ -20,9 +20,9 @@ Phase 1.0 established the operational Laravel/Vue shell and quality checks; see 
 ## Phase 1.6 checkpoints
 
 - **1.6A — Architecture & Delivery Design: approved with membership-era revision.** Removal/rejoin with a new membership must never restore prior-era notifications; suspension/reactivation retains the same era.
-- **1.6B — Persistence & Safety Contracts: complete locally, awaiting review.** Notification Application/Infrastructure, exact safe version-1 payload, semantic target/plain snapshots, caller-owned physical PostgreSQL transaction, trusted active membership port/Organization adapter, era-scoped schema/indexes and focused tests. See [ADR 0008](../decisions/0008-notification-center-architecture.md) and [validation](phase-01-notification-center-validation.md).
-- **1.6C — Notification Query & Read Lifecycle API: pending explicit authorization.** No endpoint/query/read operation is implemented in B; every future list/count/read mutation must scope current organization, authenticated actor and active membership ID.
-- **1.6D — First producer: pending.** AcceptInvitation remains unchanged; no ordinary application flow writes notification rows in B. Notification UI remains later work.
+- **1.6B — Persistence & Safety Contracts: approved and committed as 1627633.** Notification Application/Infrastructure, exact safe version-1 payload, semantic target/plain snapshots, caller-owned physical PostgreSQL transaction, trusted active membership port/Organization adapter, era-scoped schema/indexes and focused tests. See [ADR 0008](../decisions/0008-notification-center-architecture.md) and [validation](phase-01-notification-center-validation.md).
+- **1.6C — Notification Query & Read Lifecycle API: complete locally, awaiting review.** Exactly four private authenticated/verified endpoints: list, unread count, mark-read and mark-all. Every query/update resolves active membership and scopes organization + authenticated actor + current membership era. Authorization precedes bounded cursor/page validation; raw payload remains private; first-read timestamps are idempotent. No schema/producer/frontend change.
+- **1.6D — Invitation Acceptance Notification Producer: pending explicit authorization.** AcceptInvitation remains unchanged; no ordinary application flow writes notification rows through C. **1.6E frontend** center/badge/polling/target routing remains pending.
 
 Phase 1.6 is not complete. Generic email delivery, Horizon/queues and asynchronous execution, retries/outbox, Reverb/realtime and notification preferences are deferred to separately authorized milestones. No queue worker/job/failed-jobs table or delivery abstraction is included in B.
 

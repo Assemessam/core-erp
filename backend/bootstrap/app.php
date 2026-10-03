@@ -1,6 +1,9 @@
 <?php
 
 use App\Modules\Audit\Application\Exceptions\AuditQueryInvalid;
+use App\Modules\Notification\Application\Exceptions\NotificationNotFound;
+use App\Modules\Notification\Application\Exceptions\NotificationQueryInvalid;
+use App\Modules\Notification\Application\Exceptions\NotificationStorageFailed;
 use App\Modules\Organization\Application\Authorization\AccessDenied;
 use App\Modules\Organization\Application\Exceptions\RoleNameConflict;
 use App\Modules\Organization\Domain\Invitations\InvitationRejected;
@@ -26,8 +29,11 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->dontFlash(['token', 'password', 'password_confirmation', 'current_password']);
-        $exceptions->dontReport([InvitationRejected::class]);
+        $exceptions->dontReport([InvitationRejected::class, NotificationNotFound::class]);
         $exceptions->map(AuditQueryInvalid::class, fn (AuditQueryInvalid $failure) => ValidationException::withMessages($failure->errors));
+        $exceptions->map(NotificationQueryInvalid::class, fn (NotificationQueryInvalid $failure) => ValidationException::withMessages($failure->errors));
+        $exceptions->render(fn (NotificationNotFound $failure) => response()->json(['message' => $failure->getMessage()], 404));
+        $exceptions->render(fn (NotificationStorageFailed $failure) => response()->json(['message' => $failure->getMessage()], 503));
         $exceptions->render(OrganizationFailureMapper::invitationRejected(...));
         $exceptions->render(OrganizationFailureMapper::invitationDeliveryFailed(...));
         $exceptions->map(OwnerMembershipProtected::class, OrganizationFailureMapper::ownerMembershipProtected(...));

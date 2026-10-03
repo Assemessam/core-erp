@@ -1,7 +1,7 @@
 # ADR 0008: Notification Center architecture
 
 - Date: 2026-10-03
-- Status: Accepted design; checkpoint 1.6B persistence/contracts implemented locally for review. Phase 1.6 remains incomplete.
+- Status: Accepted design; 1.6B approved/committed as 1627633; 1.6C query/read lifecycle complete locally, awaiting review. Phase 1.6 remains incomplete.
 - Scope: Phase 1.6 Notification Center foundation, following ADR 0005 and the supporting-capability pattern in ADR 0007.
 
 ## Context
@@ -12,7 +12,7 @@ The approved design revision requires membership-era isolation. A user removed f
 
 ## Decision and dependency boundaries
 
-Notification is a separate supporting module. Checkpoint B contains only Application and Infrastructure: public contracts, readonly data, stable vocabulary, payload/target validation, deterministic text rendering, Query Builder persistence and explicit provider wiring. There is no Domain, Presentation, Eloquent model, event bus, observer or generic channel abstraction.
+Notification is a separate supporting module. Checkpoint B contains only Application and Infrastructure: public contracts, readonly data, stable vocabulary, payload/target validation, deterministic text rendering, Query Builder persistence and explicit provider wiring. C adds HTTP Presentation for recipient-private queries/read state. There is no Domain, Eloquent model, event bus, observer or generic channel abstraction.
 
 Notification imports no Organization, Identity or Audit types. Organization Infrastructure implements Notification's access port using OrganizationAccess and persisted membership queries. Its adapter/provider may import only NotificationOrganizationAccess and NotificationMembershipContext. Other modules cannot consume Notification Infrastructure or its private validation/content/exception implementation. B adds no producer dependencies to Organization Domain/Application or to Identity/Audit.
 
@@ -22,7 +22,7 @@ Notification history is neither Audit evidence nor credential delivery. It is mu
 
 Every row stores organization_id, recipient_user_id and recipient_membership_id. The last value is a trusted historical scope resolved by the publisher; producers cannot supply it.
 
-NotificationOrganizationAccess::resolveActiveMembership(int $userId, string $organizationId) returns a readonly context with organization ID, user ID and membership ID. It serves publishing now and can resolve an authenticated actor's current scope later. The caller must supply trusted actor context for consumption; the port alone does not authenticate arbitrary IDs.
+NotificationOrganizationAccess::resolveActiveMembership(int $userId, string $organizationId) returns a readonly context with organization ID, user ID and membership ID. It serves publishing and C's authenticated actor scope resolution. The caller must supply trusted actor context for consumption; the port alone does not authenticate arbitrary IDs.
 
 OrganizationNotificationAccess delegates fresh organization visibility to OrganizationAccess, then explicitly queries persisted membership by organization, user and active status. Owners have no bypass: they must have an active membership too. A missing, removed, suspended or wrong-tenant recipient is ineligible. There is no ambient auth, selected tenant, loaded relation or cached membership decision.
 
@@ -30,7 +30,7 @@ OrganizationNotificationAccess delegates fresh organization visibility to Organi
 - Removal makes the era inaccessible and leaves its notification rows intact.
 - Removal + later rejoin with a **new membership ID does not restore notifications from the prior membership**. New messages address only the new era.
 
-Future list, unread count, mark-read and mark-all-read paths must each resolve current active context and apply all three predicates:
+C's list, unread count, mark-read and mark-all-read paths each resolve current active context and apply all three predicates; future consumer paths must preserve them:
 
 ```sql
 organization_id = :current_organization
@@ -112,7 +112,7 @@ Indexes are limited to primary key, recipient_user_id for FK deletion checks, de
 
 ## Read lifecycle, retention and deferred work
 
-Checkpoint C will implement private bounded list/unread-count and idempotent read/mark-all-read operations with fresh active context and the mandatory era predicate on every path. Initial read state is null; marking read will use trusted server/database time with read_at >= created_at. No unread-reset, deletion, archive, HTTP endpoint or read query is implemented in B.
+Checkpoint C implements private bounded list/unread-count and idempotent read/mark-all-read operations with fresh active context and the mandatory era predicate on every path, detailed below. Initial read state is null; marking read uses trusted database time with read_at >= created_at. B implemented no consumer queries; C adds no unread-reset, deletion or archive.
 
 There is no expiry/purge job or retention duration in B. Rows from removed memberships remain inaccessible until a separately authorized retention policy or organization/user deletion removes them. Account/organization deletion workflows are not introduced; existing Audit references may independently restrict those deletions. Migration down() destroys notification history and is tested only inside rollback-protected schema tests. Prefer retaining populated storage during code rollback.
 
@@ -120,8 +120,45 @@ Phase 1.6 means Notification Center foundation. Generic email delivery, notifica
 
 ## Threat model and verification limits
 
-The contract protects against normal application input mistakes, cross-tenant recipient selection, producer era forgery, credential/PII fields, unsafe targets, unsupported schemas and lost atomicity under correct caller orchestration. Runtime PostgreSQL tests and membership-era tests supplement architecture checks. B proves stored/resolved era differences and retained IDs; C must prove no old-era row is returned or mutated through the consumer API.
+The contract protects against normal application input mistakes, cross-tenant recipient selection, producer era forgery, credential/PII fields, unsafe targets, unsupported schemas and lost atomicity under correct caller orchestration. Runtime PostgreSQL tests and membership-era tests supplement architecture checks. B proves stored/resolved era differences and retained IDs; C's consumer tests prove no old-era row is returned, counted or mutated through the API after rejoin.
 
 This is not tamper-proof evidence or complete delivery: privileged SQL/table owners can fabricate or mutate rows, bypass Application schemas or change infrastructure. Authorization is a fresh check without new membership locks; requests already authorized can finish during concurrent suspension/removal, as in existing Organization access semantics. A captured removed-era row remains inaccessible to a later membership; the future D producer uses the existing organization transaction/locking workflow. No new concurrency linearization guarantee is claimed by B. Trace redaction cannot protect credentials another caller logs separately. Production retention, read throttling, least-privilege database roles, representative-volume query plans and deployment hardening need later review.
 
 See [checkpoint validation](../phases/phase-01-notification-center-validation.md) for tests, exact commands and operational results.
+
+## Phase 1.6C — Recipient-private query and read lifecycle API
+
+C adds four independently authorized Application entry points: ListNotifications, GetUnreadNotificationCount, MarkNotificationRead and MarkAllNotificationsRead. A small internal ResolveNotificationMembership operation calls the existing access port and asserts the returned context matches the explicit actor/organization and has a positive membership ID. No actor, membership era or time comes from client-supplied scope fields. Organization's adapter and B's publisher/validation/rendering/storage schema remain unchanged. No permission, capability metadata or owner privacy bypass is introduced.
+
+Internal NotificationReader exposes read(context, criteria) and unreadCount(context); NotificationReadStore exposes markRead(context, notificationId) and markAllRead(context). They are concrete persistence operations with trusted scope, not public generic CRUD/repositories. NotificationServiceProvider explicitly binds their Query Builder implementations. Notification imports no Organization, Identity or Audit source; the existing Organization access bridge is the only cross-module adapter.
+
+All four endpoints require auth:sanctum and verified middleware, with string ULID organization routing outside Organization model binding:
+
+| Method | Path under /api/v1 | Success |
+| --- | --- | --- |
+| GET | /organizations/{organization}/notifications | 200, bounded private page |
+| GET | /organizations/{organization}/notifications/unread-count | 200, data.unread_count |
+| POST | /organizations/{organization}/notifications/{notification}/read | 204, newly/already read |
+| POST | /organizations/{organization}/notifications/read-all | 204, including zero unread |
+
+The static read-all route is registered before the item route; notification IDs have structural ULID constraints. No creation/delete/update/archive/mark-unread endpoint exists. Guest gets 401, unverified gets 403, suspended/removed/nonmember/foreign gets hidden 404. Active members and owners see only their own current era. Item lookup never happens globally: absent, foreign tenant, foreign recipient and old-era IDs share the fixed Notification not found. 404 response.
+
+ListNotificationsRequest follows the established authorization-first Audit pattern using Notification-owned types. It resolves active scope before the shared pure query validator runs. ListNotifications independently repeats fresh scope resolution and validation before persistence, protecting direct calls and changes after HTTP validation; this deliberately adds a second small access check for HTTP list requests. Every Application invocation resolves scope once. Hidden scope wins over malformed cursor/per_page/unsupported keys. Authorized invalid input receives fixed 422 field errors without supplied values. Count/read commands authorize independently too; middleware remains the trusted identity/verification adapter, not the tenant/privacy boundary.
+
+Only cursor and per_page are list parameters. per_page defaults to 25 and accepts canonical integers 1–100. No recipient, membership, type/unread/date/search/actor/target/sort input is supported. Unsupported keys are rejected rather than ignored. Existing Laravel HTTP string normalization remains in effect; Application callers receive the same explicit pure validator without ambient request/auth/session.
+
+NotificationCursor is Notification-owned, unsigned, unpadded canonical base64url JSON with exactly v=1 (integer), created_at (strict real UTC calendar time with six fractional digits), and id (structural ULID). Encoded length is at most 256 bytes. Strict base64/JSON/depth/field/type checks reject padding, noncanonical encodings, duplicates/unknown keys, invalid dates/year zero and unsupported versions. A cursor is a navigation position, never authority. It has no recipient or tenant authority and needs no HMAC: foreign tenant, recipient and old-era replay leave the mandatory scope intact.
+
+DatabaseNotificationReader applies the scope first and groups cursor position as (created_at < cursor_time OR (created_at = cursor_time AND id < cursor_id)). Ordering is created_at DESC, id DESC, with a per_page+1 limit. Only per_page rows are projected; the extra row determines has_more and the last returned row determines next_cursor. There is no OFFSET, SELECT *, join, raw-payload selection, JSON filter, total count, N+1 lookup or cache. The B chronology index matches this access path. Pagination is a live view, not an export snapshot; refresh sees newer rows ahead of a previous cursor.
+
+Readonly NotificationCriteria, NotificationView and NotificationPage keep persistence and HTTP separate. List data contains exactly id, stored type string, payload_version integer, title, body, semantic target {type,id} or null, nullable read_at and created_at. Dates are explicit UTC ISO-8601 with six fractional digits. Unknown future type/version values are returned as data without enum hydration or payload interpretation; the consumer never loads raw payload. Tenant/recipient/membership fields, relations, email, credentials and internal metadata are absent. Targets are semantic values constrained by B's SQL and never resolved into URLs or routes; future frontend mapping/escaping belongs to E.
+
+Unread count performs one scoped COUNT with read_at IS NULL, returning a nonnegative PHP integer and using the B partial unread index. There is no total history or all-organization aggregate, cache or polling. Response is {data: {unread_count: integer}}.
+
+Mark-one performs a conditional scoped UPDATE by all three scope fields plus id and read_at IS NULL. read_at is GREATEST(clock_timestamp(), created_at): database time clamped to creation protects the existing constraint during a clock adjustment or future-dated record. It never overwrites an already-read value. If zero rows change, a second EXISTS query uses the identical scope/id; already-read succeeds, absent fails with the same fixed 404. This is safe under PostgreSQL's conditional-update recheck for competing replay. It adds no transaction/locking workflow: the single write is atomic, while the existence fallback carries no content/ownership lookup. The database-level replay test asserts the conditional SQL and identical scoped fallback and proves the first timestamp remains stable; no new multiprocess harness is introduced.
+
+Mark-all performs one UPDATE of current-scope unread rows using the same trusted clock expression. Already-read timestamps and other recipients/tenants/eras remain untouched; zero unread succeeds. It applies to rows visible to that statement. Later inserts can remain unread, so it does not promise a permanent zero count; callers should refetch. Neither mutation accepts a client timestamp or arbitrary update values, and both preserve stored content/payload. No read-side Audit fact, notification, event or observer is created.
+
+NotificationNotFound maps to a safe fixed 404 and is not reported as an operational fault. NotificationQueryInvalid maps to standard 422 validation. Consumer reader/store SQL failures are replaced by NotificationStorageFailed with no retained SQL/binding exception chain and render a fixed 503 without debug internals. This extra exception is needed for safe unavailable-storage responses, distinct from normal missing private items and B's publication failures.
+
+C requires no new or edited migration. Producer integration, frontend center/badge/polling/target navigation, email, queues/Horizon, retry/outbox, realtime/Reverb and preferences remain pending. AcceptInvitation and every existing business command are unchanged; no ordinary flow publishes yet. Review read throttling, production-scale plans and existing already-authorized revocation races at deployment. C is implemented locally for review after validation; Phase 1.6 remains incomplete and D is not begun.

@@ -3,6 +3,8 @@
 use App\Modules\Audit\Application\Contracts\AuditHistoryAccess;
 use App\Modules\Identity\Infrastructure\Eloquent\Models\User;
 use App\Modules\Notification\Application\Contracts\NotificationOrganizationAccess;
+use App\Modules\Notification\Application\Contracts\NotificationPublisher;
+use App\Modules\Notification\Application\Data\NotificationDraft;
 use App\Modules\Notification\Application\Data\NotificationMembershipContext;
 use App\Modules\Organization\Application\Commands\RenameOrganization;
 use App\Modules\Organization\Application\Queries\ListOrganizations;
@@ -101,7 +103,7 @@ arch('Notification Application is framework independent')
 arch('Audit and Identity have no Notification dependency')
     ->expect(['App\\Modules\\Audit', 'App\\Modules\\Identity'])->not->toUse('App\\Modules\\Notification');
 
-arch('Organization Domain and Application publish no notifications in checkpoint B')
+arch('Organization Domain and Application publish no notifications through checkpoint C')
     ->expect(['App\\Modules\\Organization\\Domain', 'App\\Modules\\Organization\\Application'])
     ->not->toUse('App\\Modules\\Notification');
 
@@ -113,6 +115,15 @@ arch('Organization composition consumes only the Notification access contract an
     ->expect([OrganizationNotificationAccess::class, OrganizationServiceProvider::class])
     ->not->toUse('App\\Modules\\Notification')
     ->ignoring([NotificationOrganizationAccess::class, NotificationMembershipContext::class]);
+
+arch('Notification Infrastructure does not invoke business commands or HTTP Presentation')
+    ->expect('App\\Modules\\Notification\\Infrastructure')
+    ->not->toUse(['App\\Modules\\Notification\\Application\\Commands', 'App\\Modules\\Notification\\Presentation']);
+
+arch('Notification Presentation delegates persistence and does not publish')
+    ->expect('App\\Modules\\Notification\\Presentation')
+    ->not->toUse(['App\\Modules\\Notification\\Infrastructure', 'Illuminate\\Database', DB::class,
+        DatabaseManager::class, ConnectionInterface::class, PDO::class, NotificationPublisher::class, NotificationDraft::class]);
 
 $appDirectory = dirname(__DIR__, 2).'/app';
 $moduleDirectories = glob($appDirectory.'/Modules/*', GLOB_ONLYDIR) ?: [];
@@ -139,12 +150,39 @@ it('keeps checkpoint E Audit without a domain layer or Eloquent mutation model',
     expect(is_dir($appDirectory.'/Modules/Audit/Application/Queries'))->toBeTrue();
 });
 
-it('keeps checkpoint B Notification limited to persistence without future layers or producers', function () use ($appDirectory) {
-    foreach (['Domain', 'Presentation', 'Infrastructure/Eloquent', 'Infrastructure/Mail', 'Infrastructure/Jobs', 'Application/Queries', 'Application/Commands'] as $directory) {
+it('keeps checkpoint C Notification without Domain Eloquent or delivery infrastructure', function () use ($appDirectory) {
+    foreach (['Domain', 'Infrastructure/Eloquent', 'Infrastructure/Mail', 'Infrastructure/Jobs'] as $directory) {
         expect(is_dir($appDirectory.'/Modules/Notification/'.$directory))->toBeFalse();
     }
     expect(is_dir($appDirectory.'/Modules/Notification/Application'))->toBeTrue();
     expect(is_dir($appDirectory.'/Modules/Notification/Infrastructure'))->toBeTrue();
+    expect(is_dir($appDirectory.'/Modules/Notification/Presentation/Http'))->toBeTrue();
+    expect(is_dir($appDirectory.'/Modules/Notification/Application/Queries'))->toBeTrue();
+    expect(is_dir($appDirectory.'/Modules/Notification/Application/Commands'))->toBeTrue();
+});
+
+it('keeps Notification reader read only and read-state store limited to read_at updates', function () use ($appDirectory) {
+    $parser = (new ParserFactory)->createForHostVersion();
+    $finder = new NodeFinder;
+    foreach (['DatabaseNotificationReader', 'DatabaseNotificationReadStore'] as $type) {
+        $nodes = $parser->parse(file_get_contents($appDirectory.'/Modules/Notification/Infrastructure/Persistence/'.$type.'.php')) ?? [];
+        $forbidden = ['insert', 'delete', 'truncate', 'transaction', 'begintransaction', 'commit', 'rollback', 'aftercommit', 'dispatch', 'offset', 'join'];
+        if ($type === 'DatabaseNotificationReader') {
+            $forbidden[] = 'update';
+        }
+        $calls = $finder->find($nodes, fn (Node $node): bool => ($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall || $node instanceof Node\Expr\NullsafeMethodCall)
+            && $node->name instanceof Node\Identifier && in_array(strtolower($node->name->toString()), $forbidden, true));
+        expect($calls)->toBeEmpty();
+        $updates = $finder->find($nodes, fn (Node $node): bool => $node instanceof Node\Expr\MethodCall
+            && $node->name instanceof Node\Identifier && $node->name->toString() === 'update');
+        foreach ($updates as $update) {
+            $values = $update->args[0]->value;
+            expect($values)->toBeInstanceOf(Node\Expr\Array_::class);
+            expect($values->items)->toHaveCount(1);
+            expect($values->items[0]->key)->toBeInstanceOf(Node\Scalar\String_::class);
+            expect($values->items[0]->key->value)->toBe('read_at');
+        }
+    }
 });
 
 it('keeps notification transaction ownership and default connection explicit', function () use ($appDirectory) {

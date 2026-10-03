@@ -3,6 +3,7 @@
 use App\Http\Controllers\HealthController;
 use App\Modules\Audit\Presentation\Http\Controllers\AuditEventController;
 use App\Modules\Identity\Presentation\Http\Controllers\CurrentUserController;
+use App\Modules\Notification\Presentation\Http\Controllers\NotificationController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationInvitationController;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationMemberController;
@@ -15,6 +16,12 @@ Route::get('/ready', [HealthController::class, 'ready']);
 Route::get('/me', CurrentUserController::class)->middleware('auth:sanctum');
 Route::middleware(['auth:sanctum', 'verified'])->group(function (): void {
     Route::get('/organizations/{organization}/audit-events', AuditEventController::class)->whereUlid('organization');
+    Route::prefix('/organizations/{organization}/notifications')->whereUlid('organization')->group(function (): void {
+        Route::get('/', [NotificationController::class, 'index']);
+        Route::get('/unread-count', [NotificationController::class, 'unreadCount']);
+        Route::post('/read-all', [NotificationController::class, 'readAll']);
+        Route::post('/{notification}/read', [NotificationController::class, 'read'])->whereUlid('notification');
+    });
     Route::post('/invitations/{invitation}/accept', [OrganizationInvitationController::class, 'accept'])->middleware('throttle:30,1');
     Route::scopeBindings()->group(function (): void {
         Route::get('/organizations/{organization}/users-access', OrganizationUsersAccessController::class);
