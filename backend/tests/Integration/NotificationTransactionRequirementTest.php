@@ -3,15 +3,16 @@
 use App\Modules\Notification\Application\Contracts\NotificationPublisher;
 use App\Modules\Notification\Application\Exceptions\NotificationWriteFailed;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\Support\NotificationFixtures;
 
 it('requires a physical caller-owned PostgreSQL transaction before resolving or publishing', function () {
     // Pure IDs: guard rejects before membership queries, without any committed fixtures.
     expect(DB::transactionLevel())->toBe(0);
     expect(DB::connection()->getPdo()->inTransaction())->toBeFalse();
-    $count = DB::table('organization_notifications')->count();
+    $draft = NotificationFixtures::draft(['organizationId' => (string) Str::ulid()]);
     try {
-        app(NotificationPublisher::class)->publish(NotificationFixtures::draft());
+        app(NotificationPublisher::class)->publish($draft);
         test()->fail('Expected transaction requirement.');
     } catch (NotificationWriteFailed $failure) {
         expect($failure->category)->toBe('transaction_required');
@@ -19,7 +20,7 @@ it('requires a physical caller-owned PostgreSQL transaction before resolving or 
         expect($failure->getMessage())->toBe('Notification publication failed.');
     }
     expect(DB::transactionLevel())->toBe(0);
-    expect(DB::table('organization_notifications')->count())->toBe($count);
+    expect(DB::table('organization_notifications')->where('organization_id', $draft->organizationId)->exists())->toBeFalse();
 })->group('integration');
 
 it('rejects stale framework transaction state after an external physical rollback', function () {

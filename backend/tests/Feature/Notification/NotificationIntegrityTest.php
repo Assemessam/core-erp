@@ -168,7 +168,7 @@ it('mechanically rolls back and reapplies only the new notification migration', 
     $migration->up();
     DB::statement('SET CONSTRAINTS ALL DEFERRED');
     expect(Schema::hasTable('organization_notifications'))->toBeTrue();
-    expect(DB::table('organization_notifications')->count())->toBe(0);
+    expect(DB::table('organization_notifications')->where('id', $this->notificationValues['id'])->exists())->toBeFalse();
     DB::table('organization_notifications')->insert($this->notificationValues);
     expect(fn () => DB::transaction(fn () => DB::table('organization_notifications')->insert(array_replace($this->notificationValues, [
         'id' => (string) Str::ulid(), 'recipient_membership_id' => 0,

@@ -5,9 +5,18 @@ namespace Tests\Support;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
-/** Explicit INSERT-only read fixtures; no production bypass or cleanup mechanism. */
+/** Explicit read fixtures and scoped SQL failure injection; no production bypass or cleanup mechanism. */
 final class NotificationReadFixtures
 {
+    /** Reject read updates only for this test-owned row; outer Feature rollback removes the constraint. */
+    public static function rejectReadForNotification(string $notificationId): void
+    {
+        $notification = DB::connection()->escape($notificationId);
+        DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
+        DB::statement('ALTER TABLE organization_notifications ADD CONSTRAINT notification_read_test_failure CHECK (id <> '.$notification.' OR read_at IS NULL)');
+        DB::statement('SET CONSTRAINTS ALL DEFERRED');
+    }
+
     /** @param array<string, mixed> $overrides */
     public static function insert(string $organizationId, int $userId, int $membershipId, array $overrides = []): string
     {

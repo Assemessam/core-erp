@@ -1,6 +1,6 @@
 # Phase 1.6 — Notification Center validation
 
-Current status: B approved/committed as 1627633; C approved/committed as 45ceea9; D approved/committed as dda6cc3; **E complete locally, awaiting review**. Phase 1.6 remains incomplete; independent F review is pending and has not begun. B/C/D sections preserve their original checkpoint evidence; E evidence follows them.
+Current status: B approved/committed as 1627633; C approved/committed as 45ceea9; D approved/committed as dda6cc3; E committed as 32b301d. Independent F review returned **CHANGES REQUIRED**, with exactly one closure-blocking finding: **MEDIUM R1 — Notification backend test isolation**. The narrowly scoped F-Fix correction and its application-database validation are recorded below; Phase 1.6 awaits final read-only re-review. B/C/D/E sections preserve their original checkpoint evidence, including E's superseded disposable-database workaround.
 
 ## Checkpoint B: Persistence & Safety Contracts
 
@@ -394,3 +394,120 @@ Review the shell route-derived scope, epoch/request/generation guards on both ou
 Known limits: count polling is foreground-only and approximate, with focus/visibility refresh; history refresh is manual and never automatically reordered. Access changes clear content when the next authorized operation reports denial; hidden tabs skip polls until visible. Mark-one does not display a fabricated read timestamp, and read-all resets loaded history to the first page. Loaded older rows accumulate only in the mounted page until Refresh/context exit. No filters, global history/count, realtime, extra producer, delivery preferences or generic notification email exists. Existing B/C retention, privileged SQL and deployment/read-scale limits remain. Regression runs require a fresh guarded database because existing persistence fixtures assume an empty notification table; application browser history is retained normally.
 
 **E stops here.** Recommendation after E review/checkpoint commit and explicit authorization: **Phase 1.6F — Final Independent Security & Code Review**. F has not begun; Phase 1.6 is not marked complete.
+
+## Phase 1.6F-Fix: Notification Test Isolation
+
+Date: 2026-10-03. Baseline verified before edits: branch `feature/notifications`, completely clean tracked/untracked working tree, HEAD `32b301d` (`feat: add organization notification center`). Inspected git log, AGENTS.md, ADR 0005, this validation record, the user-supplied independent final review finding R1, notification production persistence/schema, all notification test references, support fixtures, Pest/phpunit configuration, Composer/frontend scripts and checked-in browser/CI commands. No branch change, staging, commit, push, reset or discard occurred.
+
+The independent review found no BLOCKER/HIGH production defect. R1 reproduced 11 failing / 4 passing persistence tests after browser notifications remained committed; a retained READ row also prevented installing the read-failure constraint. E's guarded disposable validation proved production behavior but did not repair ordinary `composer quality`. This correction supersedes E's test-isolation limitation and workaround. No validation-database runner or default database override is used here.
+
+### Root cause and complete assertion inventory
+
+Feature tests use `DatabaseTransactions` on the configured PostgreSQL application database; rollback isolates their writes but does not hide earlier committed browser data. Whole-table emptiness is not a Notification invariant. An assertion must identify the organization, recipient or row for which the operation is responsible. PostgreSQL also validates a new CHECK against existing rows during `ALTER TABLE`; globally impossible or unread-only predicates reject legitimate unrelated history before exercising the intended storage failure.
+
+| Test/assertion found at baseline | Correction |
+| --- | --- |
+| NotificationPersistenceTest: suspended / removed / nonmember / cross-tenant recipient rejection (four cases, baseline line 108) | Absence for the exact attempted organization and recipient |
+| NotificationPersistenceTest: inconsistent tenant / user / membership adapter context (three cases, baseline line 131) | Absence for the newly generated fixture organization |
+| NotificationPersistenceTest: unsafe payload rollback (baseline line 155) | Absence for the fixture organization; earlier organization write still rolls back |
+| NotificationPersistenceTest: rendering failure rollback (baseline line 178) | Absence for the fixture organization; safe exception and rollback assertions retained |
+| NotificationPersistenceTest: real insert failure (baseline line 209) | Absence for the fixture organization; real SQL failure, category, sanitized trace and caller rollback assertions retained |
+| NotificationPersistenceTest: organization creation adds no producer (baseline line 214) | Capture the returned new organization and assert absence for its ID |
+| NotificationPersistenceTest: global `CHECK (false)` | Organization-specific failure fixture described below |
+| NotificationReadLifecycleTest: global `CHECK (read_at IS NULL)` | Notification-ID-specific failure fixture described below; compare the entire owned row after failure |
+| NotificationIntegrityTest: global zero after migration down/up | Assert the specifically inserted fixture notification is absent after reconstruction; schema/index/constraint checks remain |
+| NotificationConsumerSecurityTest: global before/after notification count | Compare counts only for its uniquely owned organization |
+| NotificationTransactionRequirementTest: global before/after notification count | Use a newly generated draft organization ID and assert absence in that attempted scope |
+
+The last two count comparisons did not require initial emptiness, and the migration test owned its reconstructed table inside an outer transaction; they were nevertheless made explicit about test-owned scope. Existing owner-ineligibility, successful-publication rollback, query/API and invitation-producer tests already used organization/recipient/ID predicates. NotificationQueryTest's temporary column rename does not validate retained row values and already rolls back its DDL. No remaining unscoped `organization_notifications` count/emptiness assertion, global insert/read failure predicate or other retained-row precondition was found in the repository tests. Metadata counts against `pg_indexes` are schema assertions, not notification-row assumptions.
+
+### Scoped real PostgreSQL failures and regression coverage
+
+Insert failure before: `CHECK (false)`.
+
+Insert failure after: `CHECK (organization_id <> <SQL-quoted newly generated fixture organization ID>)`, installed by `NotificationFixtures::rejectInsertsForOrganization`. The owned organization is newly created and has no notifications before installation. Every other organization satisfies the CHECK, including previously committed rows. The attempted real publisher insert violates it and still produces `NotificationWriteFailed` with category `persistence_failed`.
+
+Read failure before: `CHECK (read_at IS NULL)`.
+
+Read failure after: `CHECK (id <> <SQL-quoted newly generated fixture notification ID> OR read_at IS NULL)`, installed by `NotificationReadFixtures::rejectReadForNotification`. Notification ID is the smallest reliable scope because it is the primary key. The owned row starts unread and satisfies installation; unrelated rows automatically satisfy the first term even when already read. Updating only the owned row to a non-null read timestamp violates the CHECK and still produces the safe `NotificationStorageFailed`. The existing deferred-constraint flush around DDL is preserved.
+
+Both helpers use the actual PostgreSQL connection's `escape()` (PDO quoting), fixed constraint names and normal validated CHECKs. No unsafe raw identifier interpolation, `NOT VALID`, disabled constraint, mock-only persistence substitute, production schema change or global cleanup is introduced. Constraints and regression fixtures live inside the existing Feature transaction and disappear through its rollback.
+
+Every NotificationPersistenceTest now seeds a legitimate unrelated unread row through the real publisher in a separately generated organization owned by another user. Its afterEach compares the entire unrelated stored row unchanged. This makes all rejected-publication, payload/render/SQL failure and rollback cases explicitly exercise retained unread history.
+
+New retained-unread test: **rejects only the owned publication while preserving an unrelated retained unread notification**. The unrelated row exists before constraint installation; the owned insert fails with the persistence category and leaves its organization empty. A subsequent real publication in the unrelated organization succeeds under the installed constraint; both unrelated rows remain unread and the first row stays byte-for-byte unchanged in its stored values.
+
+New retained-read test: **rejects the owned read update while preserving an unrelated retained read notification**, with **mark-one** and **mark-all** cases. A legitimate non-null read timestamp in another organization exists before constraint installation. The owned real read operation fails safely; full owned/unrelated rows are unchanged. A different notification in the same owned organization/recipient/era can still be marked read, proving that the constraint rejects only its chosen ID. These three new cases increase the full suite from 758 to 761 tests.
+
+### Real retained-data workflow and preservation evidence
+
+All ordinary Feature tests and normal `composer quality` used the unchanged configured database **coreerp**, PostgreSQL, existing DatabaseTransactions, phpunit configuration and Composer scripts. There is no `backend/.env.testing` and phpunit does not override DB_DATABASE. The app's actual connection was verified as `pgsql` / `coreerp`. Existing genuine commit/concurrency tests continue using their already established guarded disposable concurrency database; their model was not changed or expanded.
+
+Initial committed state: **7 notifications / 3 unread / 4 read**, spanning seven organizations, seven recipient users and seven membership IDs. IDs and read states:
+
+| Notification ID | Initial state |
+| --- | --- |
+| 01M410F6HC4E6BNJKYSMHD12AZ | Unread |
+| 01M415JKAG9PKV16KHVNDY5HSC | Read |
+| 01M415MH60SMJYSAH9M0MG18DR | Read |
+| 01M415MHNKV7AY9VBZ14HVF2SJ | Unread |
+| 01M41661DMEZ404HSBBJB5J2AN | Read |
+| 01M4166F7RHGFN25G2KED10JS6 | Unread |
+| 01M4166F92FVXFZ19G56RZX1AH | Read |
+
+First, affected tests passed against that existing state: **24 passed / 140 assertions**. Complete Notification and backend quality then passed; canonical JSON snapshots of every stored notification column before and after these backend runs compared identically using `cmp`.
+
+Then the repository's real targeted Playwright notification flow passed (**1 passed**, 11.3s). It registered/verified users, sent/accepted a normal invitation and read the resulting owner notification. Its newly committed READ row was `01M419KFFD203CG52NYM26GHHA`, organization `01m419kdcxqftjq3waj50xrenh`, recipient user `18800`, recipient membership `15395`, read_at `2026-10-03 16:29:53.034574+00`. The resulting state was **8 / 3 unread / 5 read**. Against exactly that same database, affected tests again passed **24 / 140**, followed by normal `composer quality`: **761 / 4222**, Pint and Larastan all passed. The eight-row canonical snapshots before/after backend quality also compared identically. Both **backend quality → Playwright** and **Playwright → affected tests → backend quality** passed.
+
+Complete checked-in Playwright then passed **6 / 0 failed**, 18.1s. It added READ notification `01M419T7P44NV5NVSGGMWWB5V4` (organization `01m419t450vza25np1tt7wgh15`, user `19612`, membership `16114`, read_at `2026-10-03 16:33:34.829532+00`) and UNREAD notification `01M419T8JK974KGVF8EFVFJP2P` (organization `01m419t4aqjs2kajyz27jgjysf`, user `19613`, membership `16115`). Final committed state: **10 / 4 unread / 6 read**. Complete Notification coverage passed again in randomized test order with seed **1606**: **275 / 1207** against those ten retained rows. Its before/after canonical snapshots were identical. An ID-keyed comparison of every initial row's complete stored values against the final snapshot confirmed all seven initial rows were unchanged; only the three expected browser rows were added.
+
+Canonical JSON SHA-256 evidence: initial/before-browser `68b0f7789e32657b2a23999d1d1439af7b9c94421b0356207fc9da4e3a704df1`; after-targeted-browser/after-quality `0c1e2c9ec95d8051a8b8856565a0654be5980c2433b61fd253d95a17ef52e106`; after-complete-browser/final `02b2964c2cbbe93f5295e84216f8f62f0f4371d395cb66b5bcdae5ca0cbf3d53`. No legitimate row was deleted, truncated or reset, and no database was cleared to make a test pass. The existing migration mechanics test temporarily exercises down/up inside its rollback transaction; it is not application-data cleanup, and the canonical snapshots prove committed rows are restored unchanged.
+
+### Commands and final results
+
+Commands run from the repository root. Browser writes and backend database suites ran sequentially. Independent frontend/static/readiness work ran separately. Logs and canonical JSON snapshots are under `/tmp/coreerp-notification-f-fix-*`; browser artifacts are under `/tmp/coreerp-notification-f-fix-browser-artifacts`. Log redirection/tee does not alter any command environment. There were no application-database migration/reset commands or dependency installations.
+
+| Exact validation command | Result |
+| --- | --- |
+| `docker compose exec -T backend php vendor/bin/pest tests/Feature/Notification/NotificationPersistenceTest.php tests/Feature/Notification/NotificationReadLifecycleTest.php --compact` | Before browser: 24 / 140 against 7 retained rows; after targeted browser: 24 / 140 against 8 retained rows |
+| `docker compose exec -T backend php vendor/bin/pest tests/Unit/Notification tests/Feature/Notification tests/Integration/NotificationTransactionRequirementTest.php tests/Unit/Organization/OrganizationNotificationsTest.php tests/Feature/Application/Notifications/InvitationNotificationIntegrationTest.php tests/Integration/InvitationNotificationAtomicityTest.php tests/Integration/InvitationConcurrencyTest.php --compact` | Complete Notification/producer/atomicity/concurrency: 275 passed / 1207 assertions |
+| `docker compose exec -T backend php vendor/bin/pest tests/Unit/Notification tests/Feature/Notification tests/Integration/NotificationTransactionRequirementTest.php tests/Unit/Organization/OrganizationNotificationsTest.php tests/Feature/Application/Notifications/InvitationNotificationIntegrationTest.php tests/Integration/InvitationNotificationAtomicityTest.php tests/Integration/InvitationConcurrencyTest.php --compact --order-by=random --random-order-seed=1606` | After complete browser suite, against 10 retained rows: 275 passed / 1207 assertions |
+| `docker compose exec -T backend php vendor/bin/pest tests/Architecture --compact` | 46 passed / 576 assertions |
+| `docker compose exec -T backend composer quality` | Both before and after targeted browser: 761 passed / 4222 assertions; no failures/skips; Pint 215 files; Larastan level 8, 144 files, no errors |
+| `docker compose exec -T backend php vendor/bin/pint tests/Feature/Notification/NotificationPersistenceTest.php tests/Feature/Notification/NotificationReadLifecycleTest.php tests/Feature/Notification/NotificationIntegrityTest.php tests/Feature/Notification/NotificationConsumerSecurityTest.php tests/Integration/NotificationTransactionRequirementTest.php tests/Support/NotificationFixtures.php tests/Support/NotificationReadFixtures.php` | Seven scoped test files passed; no formatting rewrite required |
+| `docker compose exec -T backend composer dump-autoload --optimize --strict-psr --strict-ambiguous` | Passed, 9147 classes |
+| `docker compose exec -T backend composer validate --strict` | Valid |
+| `docker compose exec -T backend composer check-platform-reqs` | All passed, PHP 8.5.11 |
+| `docker compose exec -T backend composer audit` | No security advisories |
+| `docker compose exec -T frontend npm run quality` | ESLint/Prettier/TypeScript passed; 91 tests / 12 files; production build passed, 131 modules |
+| `docker compose exec -T frontend npm audit` | Zero vulnerabilities |
+| `docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -v /tmp/coreerp-notification-f-fix-browser-artifacts:/tmp/coreerp-playwright-results -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test e2e/notifications.spec.ts` | Targeted real notification flow: 1 passed / 0 failed, 11.3s |
+| `docker run --rm --network host --ipc=host -v "$PWD/frontend:/app" -v /tmp/coreerp-notification-f-fix-browser-artifacts:/tmp/coreerp-playwright-results -w /app -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test` | Complete suite: 6 passed / 0 failed, 18.1s |
+| `docker compose config --quiet`; `docker compose ps` | Valid; all five existing services healthy |
+| `docker compose exec -T postgres pg_isready -U coreerp -d coreerp`; `docker compose exec -T redis redis-cli ping` | Accepting connections; PONG |
+| `curl -fsS http://localhost:8088/api/v1/health`; `curl -fsS http://localhost:8088/api/v1/ready`; `curl -fsS http://localhost:5174/api/v1/ready`; `curl -fsS -o /tmp/coreerp-notification-f-fix-mailpit-info.json -w '%{http_code}\n' http://localhost:8026/api/v1/info` | API health/readiness and frontend proxy status ok; Mailpit HTTP 200 |
+| `docker compose exec -T backend php artisan migrate:status` | All seven existing migrations Ran, batches 1–7 |
+| `docker compose exec -T backend php artisan tinker --execute="dump(config('database.default'), DB::selectOne('SELECT current_database() AS name')->name);"` | pgsql / coreerp |
+| `docker compose exec -T postgres psql -U coreerp -d postgres -Atc "SELECT count(*) FROM pg_database WHERE datname IN ('coreerp_concurrency_test', 'coreerp_notification_e_validation')"` | Zero; both disposable databases absent after final tests |
+| `docker compose exec -T postgres psql -U coreerp -d coreerp -Atc "SELECT count(*) FROM pg_constraint WHERE conrelid = 'organization_notifications'::regclass AND conname IN ('notifications_test_failure', 'notification_read_test_failure');"` | Zero; test constraints removed by rollback |
+| `cmp /tmp/coreerp-notification-f-fix-initial-rows.json /tmp/coreerp-notification-f-fix-before-browser-rows.json`; `cmp /tmp/coreerp-notification-f-fix-after-targeted-browser-rows.json /tmp/coreerp-notification-f-fix-after-quality-rows.json`; `cmp /tmp/coreerp-notification-f-fix-after-complete-browser-rows.json /tmp/coreerp-notification-f-fix-final-rows.json` | All identical; SHA-256 pairs also match |
+| `git diff --check`; `git diff -- backend/app backend/database/migrations frontend backend/phpunit.xml backend/tests/Pest.php backend/composer.json`; `git diff --cached` | Clean whitespace; production/migration/frontend/configuration/staged diffs empty |
+
+Read-only state checks used `docker compose exec -T postgres psql -U coreerp -d coreerp -Atc "SELECT current_database(), count(*), count(*) FILTER (WHERE read_at IS NULL), count(*) FILTER (WHERE read_at IS NOT NULL) FROM organization_notifications; SELECT id, organization_id, recipient_user_id, recipient_membership_id, read_at FROM organization_notifications ORDER BY id;"`. Canonical snapshots used `docker compose exec -T postgres psql -U coreerp -d coreerp -Atc "SELECT jsonb_agg(to_jsonb(n) ORDER BY id) FROM organization_notifications n"`, redirected to initial/before-browser/after-targeted-browser/final snapshot files, then compared with `cmp` or an ID-keyed Python comparison. Additional inspection used `rg`, `cat`, `sed`, `git branch --show-current`, `git status --short`, `git log -8 --oneline`, `git diff --check`, `git diff --name-only` and `git diff --stat`.
+
+### Scope and re-review boundary
+
+Modified only seven backend test/support files and this validation record. Created no repository files. Production backend source (including AcceptInvitation), API, authorization, membership-era behavior, payload validation, semantic target allowlist and credential exclusion are unchanged. All historical migrations, frontend source/tests, manifests/locks, Composer/phpunit/Pest database configuration, Compose and CI are unchanged. ADR 0008 makes no test-isolation claim requiring architectural amendment, so it and README are untouched.
+
+Exact modified files:
+
+- `backend/tests/Feature/Notification/NotificationConsumerSecurityTest.php`
+- `backend/tests/Feature/Notification/NotificationIntegrityTest.php`
+- `backend/tests/Feature/Notification/NotificationPersistenceTest.php`
+- `backend/tests/Feature/Notification/NotificationReadLifecycleTest.php`
+- `backend/tests/Integration/NotificationTransactionRequirementTest.php`
+- `backend/tests/Support/NotificationFixtures.php`
+- `backend/tests/Support/NotificationReadFixtures.php`
+- `docs/phases/phase-01-notification-center-validation.md`
+
+No remaining retained-notification test-order dependency was found. The existing serial database-suite requirement remains: transactional DDL tests and browser writes must not run concurrently. This correction concerns order independence of supported sequential workflows; it does not authorize parallel database/browser execution or broaden the test architecture. No production-volume deployment, hosted CI or new independent review was performed. All requested local checks passed; R1 is fully resolved locally and Phase 1.6 is ready for final read-only re-review. Phase 1.6F-Fix stops here; no new phase begins.

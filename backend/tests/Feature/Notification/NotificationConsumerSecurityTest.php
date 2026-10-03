@@ -216,7 +216,7 @@ it('registers exactly the four identifier-based routes without permissions capab
         }
     }
     $beforeAudit = DB::table('audit_events')->count();
-    $beforeNotifications = DB::table('organization_notifications')->count();
+    $beforeNotifications = DB::table('organization_notifications')->where('organization_id', $this->org->id)->count();
     $this->actingAs($this->actor);
     foreach (['not-a-ulid', '8ZZZZZZZZZZZZZZZZZZZZZZZZZ'] as $id) {
         $this->getJson('/api/v1/organizations/'.$id.'/notifications?cursor=bad')->assertNotFound()->assertJsonMissingPath('errors');
@@ -233,5 +233,5 @@ it('registers exactly the four identifier-based routes without permissions capab
     $this->getJson('/api/v1/organizations/'.$this->org->id)->assertJsonMissingPath('meta.can_view_notifications');
     expect(DB::table('permissions')->where('key', 'like', 'notifications.%')->count())->toBe(0);
     expect(DB::table('audit_events')->count())->toBe($beforeAudit);
-    expect(DB::table('organization_notifications')->count())->toBe($beforeNotifications);
+    expect(DB::table('organization_notifications')->where('organization_id', $this->org->id)->count())->toBe($beforeNotifications);
 });

@@ -23,6 +23,19 @@ beforeEach(function () {
     $this->draft = NotificationFixtures::draft([
         'organizationId' => $this->organization->id, 'recipientUserId' => $this->recipient->id,
     ]);
+
+    // Every publication/failure assertion must coexist with a legitimate unrelated unread row.
+    $this->unrelatedOwner = User::factory()->create();
+    $this->unrelatedOrganization = OrganizationFixtures::unaudited($this->unrelatedOwner->id, 'Retained unread notification');
+    $this->unrelatedDraft = NotificationFixtures::draft([
+        'organizationId' => $this->unrelatedOrganization->id, 'recipientUserId' => $this->unrelatedOwner->id,
+    ]);
+    app(NotificationPublisher::class)->publish($this->unrelatedDraft);
+    $this->unrelatedRow = (array) DB::table('organization_notifications')->where('organization_id', $this->unrelatedOrganization->id)->sole();
+});
+
+afterEach(function () {
+    expect((array) DB::table('organization_notifications')->where('id', $this->unrelatedRow['id'])->sole())->toBe($this->unrelatedRow);
 });
 
 it('binds the publisher and access adapter and persists the trusted recipient membership independently of payload membership', function () {
@@ -105,7 +118,7 @@ it('rejects suspended removed nonmember and cross-tenant recipients without inse
         expect($failure->category)->toBe('recipient_ineligible');
         expect($failure->getPrevious())->toBeNull();
     }
-    expect(DB::table('organization_notifications')->count())->toBe(0);
+    expect(DB::table('organization_notifications')->where('organization_id', $organizationId)->where('recipient_user_id', $recipientId)->exists())->toBeFalse();
 })->with(['suspended', 'removed', 'nonmember', 'cross-tenant']);
 
 it('rejects an adapter context inconsistent with the requested recipient or tenant', function (string $kind) {
@@ -128,7 +141,7 @@ it('rejects an adapter context inconsistent with the requested recipient or tena
     } catch (NotificationWriteFailed $failure) {
         expect($failure->category)->toBe('invalid_membership_context');
     }
-    expect(DB::table('organization_notifications')->count())->toBe(0);
+    expect(DB::table('organization_notifications')->where('organization_id', $this->organization->id)->exists())->toBeFalse();
 })->with(['tenant', 'user', 'membership']);
 
 it('rolls back successful publication and earlier caller writes on subsequent failure', function () {
@@ -152,7 +165,7 @@ it('propagates unsafe payload failure and rolls back earlier caller writes', fun
         ]));
     }))->toThrow(NotificationWriteFailed::class);
     expect($this->organization->fresh()->name)->toBe('Notification fixture');
-    expect(DB::table('organization_notifications')->count())->toBe(0);
+    expect(DB::table('organization_notifications')->where('organization_id', $this->organization->id)->exists())->toBeFalse();
 });
 
 it('replaces rendering failures with safe exceptions and rolls back the caller transaction', function () {
@@ -175,11 +188,11 @@ it('replaces rendering failures with safe exceptions and rolls back the caller t
         expect(str_contains((string) $failure, 'sensitive-renderer-internals'))->toBeFalse();
     }
     expect($this->organization->fresh()->name)->toBe('Notification fixture');
-    expect(DB::table('organization_notifications')->count())->toBe(0);
+    expect(DB::table('organization_notifications')->where('organization_id', $this->organization->id)->exists())->toBeFalse();
 });
 
 it('sanitizes real insert errors and argument traces without keeping SQL bindings or snapshots', function () {
-    DB::statement('ALTER TABLE organization_notifications ADD CONSTRAINT notifications_test_failure CHECK (false)');
+    NotificationFixtures::rejectInsertsForOrganization($this->organization->id);
     app()->instance(NotificationTextRenderer::class, new class extends NotificationTextRenderer
     {
         public function render(NotificationType $type, int $payloadVersion, #[SensitiveParameter] array $payload): NotificationText
@@ -206,10 +219,25 @@ it('sanitizes real insert errors and argument traces without keeping SQL binding
         ini_set('zend.exception_ignore_args', $previous);
     }
     expect($this->organization->fresh()->name)->toBe('Notification fixture');
-    expect(DB::table('organization_notifications')->count())->toBe(0);
+    expect(DB::table('organization_notifications')->where('organization_id', $this->organization->id)->exists())->toBeFalse();
+});
+
+it('rejects only the owned publication while preserving an unrelated retained unread notification', function () {
+    NotificationFixtures::rejectInsertsForOrganization($this->organization->id);
+    try {
+        DB::transaction(fn () => app(NotificationPublisher::class)->publish($this->draft));
+        test()->fail('Expected owned publication persistence failure.');
+    } catch (NotificationWriteFailed $failure) {
+        expect($failure->category)->toBe('persistence_failed');
+    }
+    expect(DB::table('organization_notifications')->where('organization_id', $this->organization->id)->exists())->toBeFalse();
+    expect($this->unrelatedRow['read_at'])->toBeNull();
+    // The installed constraint also permits subsequent legitimate inserts in the unrelated scope.
+    app(NotificationPublisher::class)->publish($this->unrelatedDraft);
+    expect(DB::table('organization_notifications')->where('organization_id', $this->unrelatedOrganization->id)->whereNull('read_at')->count())->toBe(2);
 });
 
 it('adds no notification producer to existing organization creation', function () {
-    app(CreateOrganization::class)->handle($this->owner->id, 'No notification instrumentation');
-    expect(DB::table('organization_notifications')->count())->toBe(0);
+    $organization = app(CreateOrganization::class)->handle($this->owner->id, 'No notification instrumentation');
+    expect(DB::table('organization_notifications')->where('organization_id', $organization->id)->exists())->toBeFalse();
 });

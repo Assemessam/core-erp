@@ -114,9 +114,8 @@ it('satisfies read timestamp constraints even when creation is ahead of the curr
 
 it('sanitizes actual read-state SQL failure without changing content or retaining a database exception', function () {
     $id = NotificationReadFixtures::insert($this->org->id, $this->actor->id, $this->member->id);
-    DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
-    DB::statement('ALTER TABLE organization_notifications ADD CONSTRAINT notification_read_test_failure CHECK (read_at IS NULL)');
-    DB::statement('SET CONSTRAINTS ALL DEFERRED');
+    $before = (array) DB::table('organization_notifications')->where('id', $id)->sole();
+    NotificationReadFixtures::rejectReadForNotification($id);
     try {
         DB::transaction(fn () => $this->mark->handle($this->actor->id, $this->org->id, $id));
         test()->fail('Expected safe storage failure.');
@@ -125,5 +124,29 @@ it('sanitizes actual read-state SQL failure without changing content or retainin
         expect($failure->getPrevious())->toBeNull();
         expect(str_contains((string) $failure, 'notification_read_test_failure') || str_contains((string) $failure, 'update "organization_notifications"'))->toBeFalse();
     }
-    expect(DB::table('organization_notifications')->where('id', $id)->sole()->read_at)->toBeNull();
+    expect((array) DB::table('organization_notifications')->where('id', $id)->sole())->toBe($before);
 });
+
+it('rejects the owned read update while preserving an unrelated retained read notification', function (string $operation) {
+    $unrelatedOwner = User::factory()->create();
+    $unrelatedOrg = OrganizationFixtures::unaudited($unrelatedOwner->id, 'Retained read notification');
+    $unrelatedMember = $unrelatedOrg->memberships()->where('user_id', $unrelatedOwner->id)->sole();
+    $unrelatedId = NotificationReadFixtures::insert($unrelatedOrg->id, $unrelatedOwner->id, $unrelatedMember->id, ['read_at' => '2026-10-01T00:00:01.654321Z']);
+    $unrelatedBefore = (array) DB::table('organization_notifications')->where('id', $unrelatedId)->sole();
+    expect($unrelatedBefore['read_at'])->not->toBeNull();
+    $id = NotificationReadFixtures::insert($this->org->id, $this->actor->id, $this->member->id);
+    $before = (array) DB::table('organization_notifications')->where('id', $id)->sole();
+
+    NotificationReadFixtures::rejectReadForNotification($id);
+    expect(fn () => DB::transaction(fn () => $operation === 'mark-one'
+        ? $this->mark->handle($this->actor->id, $this->org->id, $id)
+        : $this->markAll->handle($this->actor->id, $this->org->id)))
+        ->toThrow(NotificationStorageFailed::class, 'Notification storage is unavailable.');
+    expect((array) DB::table('organization_notifications')->where('id', $id)->sole())->toBe($before);
+    expect((array) DB::table('organization_notifications')->where('id', $unrelatedId)->sole())->toBe($unrelatedBefore);
+
+    // Even another row in the same recipient/era can be marked read: only the chosen ID is rejected.
+    $otherId = NotificationReadFixtures::insert($this->org->id, $this->actor->id, $this->member->id);
+    $this->mark->handle($this->actor->id, $this->org->id, $otherId);
+    expect(DB::table('organization_notifications')->where('id', $otherId)->sole()->read_at)->not->toBeNull();
+})->with(['mark-one', 'mark-all']);
